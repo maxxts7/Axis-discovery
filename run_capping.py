@@ -292,7 +292,7 @@ def main():
     t_start = time.time()
 
     from generation_experiment import SteeringExperiment, compute_directions, MODEL_CONFIGS
-    from capping_experiment import compute_thresholds, run_capping_experiment, compute_compliance_axis
+    from capping_experiment import compute_thresholds, run_capping_experiment, compute_compliance_axis, run_capability_eval
 
     output_dir = Path(args.output_dir or cfg["OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -436,9 +436,34 @@ def main():
         prompt_categories=prompt_categories,
     )
 
+    # --- Capability evaluation ---
+    print("\nRunning capability evaluation on calibration prompts...")
+    cap_eval_df = run_capability_eval(
+        exp=exp,
+        capability_prompts=calibration_prompts,
+        cap_layers=cap_layers,
+        thresholds=thresholds,
+        axis_directions=axis_directions,
+        max_new_tokens=cfg["MAX_NEW_TOKENS"],
+        temperature=TEMPERATURE,
+        do_sample=DO_SAMPLE,
+        version=version,
+    )
+
+    # Print summary
+    print("\n  Capability eval summary (benign prompts):")
+    summary = cap_eval_df.groupby(["direction_type", "alpha"]).agg(
+        interventions=("n_interventions", "mean"),
+        mean_jsd=("mean_jsd", "mean"),
+        false_refusals=("capped_refused", "mean"),
+        exact_match=("exact_match", "mean"),
+    ).round(3)
+    print(summary.to_string())
+
     # --- Save outputs ---
     gen_df.to_csv(output_dir / "generations.csv", index=False)
     step_df.to_csv(output_dir / "per_step_metrics.csv", index=False)
+    cap_eval_df.to_csv(output_dir / "capability_eval.csv", index=False)
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed / 60:.1f} minutes.")
@@ -446,6 +471,7 @@ def main():
     print(f"  version.json")
     print(f"  generations.csv         {len(gen_df)} rows")
     print(f"  per_step_metrics.csv    {len(step_df)} rows")
+    print(f"  capability_eval.csv     {len(cap_eval_df)} rows")
 
 
 if __name__ == "__main__":

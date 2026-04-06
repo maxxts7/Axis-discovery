@@ -572,3 +572,128 @@ def run_capping_experiment(
     )
 
     return pd.DataFrame(generation_rows), pd.DataFrame(step_metric_rows)
+
+
+# ---------------------------------------------------------------------------
+# Capability evaluation
+# ---------------------------------------------------------------------------
+
+def run_capability_eval(
+    exp: SteeringExperiment,
+    capability_prompts: list[str],
+    cap_layers: list[int],
+    thresholds: dict[str, dict[int, dict[float, float]]],
+    axis_directions: dict[str, torch.Tensor],
+    max_new_tokens: int = 128,
+    temperature: float = 1.0,
+    do_sample: bool = False,
+    version: str = "",
+) -> pd.DataFrame:
+    """Evaluate capability degradation by running capped model on benign prompts.
+
+    For each benign prompt and each (axis, alpha) condition, generates a capped
+    response and records:
+      - n_interventions: how often the cap fires (ideally ~0 on benign prompts)
+      - jsd: mean Jensen-Shannon divergence vs uncapped baseline
+      - refused: whether the response contains a refusal phrase
+      - exact_match: whether capped output is identical to baseline
+
+    A well-designed axis should have near-zero interventions on benign prompts.
+    High interventions here means the cap is non-selective — it fires on normal
+    behaviour too, degrading model capability.
+
+    Returns:
+        DataFrame with one row per (prompt, axis, alpha).
+    """
+    import re
+    REFUSE_RE = re.compile(
+        r"I('m| am) (sorry|unable|not able)|I cannot|I can't|I won't|"
+        r"I will not|against my|ethical|harmful|illegal",
+        re.I,
+    )
+
+    rows = []
+    final_layer = exp.num_layers - 1
+    track_layers = sorted({cap_layers[-1], final_layer})
+    cap_layers_str = f"L{cap_layers[0]}-L{cap_layers[-1]}"
+
+    first_axis = next(iter(thresholds))
+    alphas = list(next(iter(thresholds[first_axis].values())).keys())
+    n_conditions = len(axis_directions) * len(alphas)
+
+    logger.info(
+        "Capability eval: %d benign prompts × %d conditions = %d generations",
+        len(capability_prompts), n_conditions, len(capability_prompts) * n_conditions,
+    )
+
+    for prompt_idx, prompt in enumerate(tqdm(capability_prompts, desc="CapabilityEval")):
+        input_ids = exp.tokenize(prompt)
+        prompt_len = input_ids.shape[1]
+
+        # Baseline (uncapped)
+        try:
+            bl_ids, bl_scores, bl_projs = _generate_baseline_multi_axis(
+                exp, input_ids, axis_directions, track_layers,
+                max_new_tokens, temperature, do_sample,
+            )
+            bl_text = exp.tokenizer.decode(bl_ids[0, prompt_len:], skip_special_tokens=True)
+        except Exception:
+            logger.exception("  FAILED baseline for capability prompt %d — skipping", prompt_idx)
+            continue
+
+        for axis_name, layer_alpha_taus in thresholds.items():
+            axis_unit = axis_directions[axis_name]
+
+            for alpha in alphas:
+                per_layer_tau = {
+                    layer_idx: layer_alpha_taus[layer_idx][alpha]
+                    for layer_idx in cap_layers
+                }
+                tau_repr = per_layer_tau[cap_layers[-1]]
+
+                try:
+                    pt_ids, pt_scores, pt_projs, n_interventions = generate_capped(
+                        exp, input_ids, cap_layers, axis_unit, per_layer_tau,
+                        track_layers, max_new_tokens, temperature, do_sample,
+                    )
+                except Exception:
+                    logger.exception(
+                        "  FAILED capability %s α=%.2f prompt=%d — skipping",
+                        axis_name, alpha, prompt_idx,
+                    )
+                    continue
+
+                pt_text = exp.tokenizer.decode(pt_ids[0, prompt_len:], skip_special_tokens=True)
+
+                # Mean JSD across decode steps
+                step_metrics = compute_step_metrics(
+                    bl_scores, pt_scores, bl_ids, pt_ids,
+                    exp.tokenizer, prompt_len,
+                )
+                mean_jsd = float(np.mean([s["jensen_shannon_divergence"] for s in step_metrics])) if step_metrics else None
+
+                rows.append({
+                    "version":              version,
+                    "prompt_idx":           prompt_idx,
+                    "prompt_text":          prompt,
+                    "direction_type":       axis_name,
+                    "alpha":                alpha,
+                    "threshold_value":      tau_repr,
+                    "cap_layers":           cap_layers_str,
+                    "n_interventions":      n_interventions,
+                    "mean_jsd":             mean_jsd,
+                    "baseline_refused":     bool(REFUSE_RE.search(bl_text)),
+                    "capped_refused":       bool(REFUSE_RE.search(pt_text)),
+                    "exact_match":          bl_text.strip() == pt_text.strip(),
+                    "baseline_len_tokens":  bl_ids.shape[1] - prompt_len,
+                    "capped_len_tokens":    pt_ids.shape[1] - prompt_len,
+                    "baseline_text":        bl_text,
+                    "capped_text":          pt_text,
+                })
+
+                del pt_ids, pt_scores, pt_projs
+
+        del bl_ids, bl_scores, bl_projs
+        torch.cuda.empty_cache()
+
+    return pd.DataFrame(rows)
