@@ -196,6 +196,81 @@ def compute_thresholds(
 
 
 # ---------------------------------------------------------------------------
+# Compliance axis construction
+# ---------------------------------------------------------------------------
+
+def compute_compliance_axis(
+    exp: SteeringExperiment,
+    refusing_prompts: list[str],
+    compliant_prompts: list[str],
+    cap_layers: list[int],
+    assistant_axis: Optional[torch.Tensor] = None,
+    axis_name: str = "compliance",
+) -> torch.Tensor:
+    """Compute a compliance direction from a contrast of refusing vs compliant prompts.
+
+    Direction = mean(refusing_activations) - mean(compliant_activations) at
+    cap_layers[-1], normalized to a unit vector. Points from jailbroken-compliant
+    behavior toward refusing behavior — so capping (flooring) along this direction
+    prevents the model from drifting toward compliance.
+
+    Optionally orthogonalized against the assistant axis to isolate variance
+    not already captured by the assistant direction.
+
+    Args:
+        refusing_prompts:  Prompts where the model refuses (e.g. JBB-Behaviors).
+        compliant_prompts: Prompts where the model complies (e.g. WildJailbreak train).
+        cap_layers:        Layer range used for capping; calibrates at cap_layers[-1].
+        assistant_axis:    If provided, orthogonalize result against this direction.
+        axis_name:         Label for logging.
+
+    Returns:
+        Unit vector (float32, CPU) pointing from compliance toward refusal.
+    """
+    ref_layer = cap_layers[-1]
+    logger.info(
+        "Computing %s compliance axis at L%d (%d refusing, %d compliant prompts)...",
+        axis_name, ref_layer, len(refusing_prompts), len(compliant_prompts),
+    )
+
+    refusing_acts = []
+    for prompt in tqdm(refusing_prompts, desc=f"  {axis_name} refusing", leave=False):
+        ids = exp.tokenize(prompt)
+        acts, _ = exp.get_baseline_trajectory(ids)
+        refusing_acts.append(acts[ref_layer].float())
+
+    compliant_acts = []
+    for prompt in tqdm(compliant_prompts, desc=f"  {axis_name} compliant", leave=False):
+        ids = exp.tokenize(prompt)
+        acts, _ = exp.get_baseline_trajectory(ids)
+        compliant_acts.append(acts[ref_layer].float())
+
+    refusing_mean  = torch.stack(refusing_acts).mean(0)
+    compliant_mean = torch.stack(compliant_acts).mean(0)
+
+    direction = refusing_mean - compliant_mean
+    raw_norm = direction.norm().item()
+    direction = direction / (direction.norm() + 1e-12)
+
+    if assistant_axis is not None:
+        cos_before = (direction @ assistant_axis).item()
+        direction = direction - (direction @ assistant_axis) * assistant_axis
+        if direction.norm().item() < 1e-6:
+            logger.warning("  %s axis collapsed after orthogonalization — skipping", axis_name)
+            return None
+        direction = direction / direction.norm()
+        cos_after = (direction @ assistant_axis).item()
+        logger.info(
+            "  %s: raw_norm=%.2f  cos(assistant) before=%.4f, after=%.6f",
+            axis_name, raw_norm, cos_before, cos_after,
+        )
+    else:
+        logger.info("  %s: raw_norm=%.2f  (not orthogonalized)", axis_name, raw_norm)
+
+    return direction.cpu()
+
+
+# ---------------------------------------------------------------------------
 # Generation functions
 # ---------------------------------------------------------------------------
 

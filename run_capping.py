@@ -48,6 +48,7 @@ PRESETS = {
         MAX_NEW_TOKENS=64,
         OUTPUT_DIR="results/capping_sanity",
         N_CALIBRATION=10,
+        N_COMPLIANCE=10,   # prompts per side for compliance axis construction
     ),
     "light": dict(
         VERSION="light",
@@ -57,6 +58,7 @@ PRESETS = {
         MAX_NEW_TOKENS=128,
         OUTPUT_DIR="results/capping_light",
         N_CALIBRATION=20,
+        N_COMPLIANCE=20,
     ),
     "full": dict(
         VERSION="v1.0",
@@ -66,6 +68,7 @@ PRESETS = {
         MAX_NEW_TOKENS=256,
         OUTPUT_DIR="results/capping_full",
         N_CALIBRATION=30,
+        N_COMPLIANCE=50,
     ),
     "paper": dict(
         VERSION="paper",
@@ -75,6 +78,7 @@ PRESETS = {
         MAX_NEW_TOKENS=256,
         OUTPUT_DIR="results/capping_paper",
         N_CALIBRATION=30,
+        N_COMPLIANCE=50,
     ),
 }
 
@@ -144,6 +148,58 @@ from run_generation import FACTUAL_PROMPTS, CREATIVE_PROMPTS, PCA_PROMPTS
 # ============================================================
 # DATASET LOADING
 # ============================================================
+
+def load_jbb_behaviors(n_prompts=None):
+    """Load JailbreakBench JBB-Behaviors harmful goals from HuggingFace.
+
+    These are bare harmful goal descriptions (no jailbreak wrapper) — Qwen3-32B
+    refuses all of them directly. Used as the *refusing* side when constructing
+    compliance axes.
+
+    Returns list of goal strings.
+    """
+    from datasets import load_dataset
+    logger = logging.getLogger("capping")
+    logger.info("Loading JailbreakBench/JBB-Behaviors...")
+    ds = load_dataset("JailbreakBench/JBB-Behaviors", "behaviors")
+    split = list(ds.keys())[0]
+    goals = [row["Goal"] for row in ds[split]]
+    if n_prompts is not None:
+        goals = goals[:n_prompts]
+    logger.info("Loaded %d JBB-Behaviors goals", len(goals))
+    return goals
+
+
+def load_wildjailbreak_train(n_prompts=None):
+    """Load WildJailbreak adversarial_harmful prompts from the TRAIN config.
+
+    Completely separate from the eval config used for evaluation — no overlap.
+    Used as the *compliant* side when constructing compliance axes.
+
+    Returns list of adversarial prompt strings.
+    """
+    from datasets import load_dataset
+    logger = logging.getLogger("capping")
+    logger.info("Loading allenai/wildjailbreak (train, adversarial_harmful)...")
+    ds = load_dataset(
+        "allenai/wildjailbreak", "train",
+        delimiter="\t",
+        keep_default_na=False,
+    )
+    split = "train" if "train" in ds else list(ds.keys())[0]
+    ds = ds[split]
+
+    prompts = []
+    for row in ds:
+        if row.get("data_type") != "adversarial_harmful":
+            continue
+        prompts.append(row["adversarial"])
+
+    if n_prompts is not None:
+        prompts = prompts[:n_prompts]
+    logger.info("Loaded %d WildJailbreak train adversarial_harmful prompts", len(prompts))
+    return prompts
+
 
 def load_jailbreak_dataset(n_prompts=None):
     """Load WildJailbreak adversarial_harmful prompts from HuggingFace.
@@ -236,7 +292,7 @@ def main():
     t_start = time.time()
 
     from generation_experiment import SteeringExperiment, compute_directions, MODEL_CONFIGS
-    from capping_experiment import compute_thresholds, run_capping_experiment
+    from capping_experiment import compute_thresholds, run_capping_experiment, compute_compliance_axis
 
     output_dir = Path(args.output_dir or cfg["OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -268,10 +324,38 @@ def main():
     )
 
     # Map to capping-experiment axis names
+    assistant_axis = all_directions["assistant_toward"]
     axis_directions = {
-        "assistant_capping": all_directions["assistant_toward"],
+        "assistant_capping": assistant_axis,
         "pc1_capping":       all_directions["pca_pc1_negative"],  # ceiling on pc1_positive = floor on pc1_negative
     }
+
+    # --- Compliance axes ---
+    # Two variants, both using JBB-Behaviors as the refusing side:
+    #   jbb_wj_compliance  — compliant side: WildJailbreak train (jailbreak-specific)
+    #   jbb_cal_compliance — compliant side: CALIBRATION_PROMPTS (benign baseline)
+    # Both orthogonalized against the assistant axis to isolate additional signal.
+    n_compliance = cfg["N_COMPLIANCE"]
+    print(f"\nBuilding compliance axes ({n_compliance} prompts per side)...")
+
+    refusing_prompts  = load_jbb_behaviors(n_prompts=n_compliance)
+    compliant_wj      = load_wildjailbreak_train(n_prompts=n_compliance)
+    compliant_cal     = CALIBRATION_PROMPTS[:n_compliance]
+
+    jbb_wj_axis = compute_compliance_axis(
+        exp, refusing_prompts, compliant_wj, cap_layers,
+        assistant_axis=assistant_axis, axis_name="jbb_wj",
+    )
+    jbb_cal_axis = compute_compliance_axis(
+        exp, refusing_prompts, compliant_cal, cap_layers,
+        assistant_axis=assistant_axis, axis_name="jbb_cal",
+    )
+
+    if jbb_wj_axis is not None:
+        axis_directions["jbb_wj_compliance"]  = jbb_wj_axis
+    if jbb_cal_axis is not None:
+        axis_directions["jbb_cal_compliance"] = jbb_cal_axis
+
     print(f"  Axis directions: {list(axis_directions.keys())}")
 
     # --- Compute thresholds from calibration prompts ---
