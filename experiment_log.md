@@ -445,3 +445,148 @@ Direction computation:
 | Status | Pending re-run after hook performance fixes |
 
 ---
+
+## 11. Raw (Non-Orthogonalized) Axes
+
+### Motivation
+
+Section 9 established that the compliance axes lose almost all discriminative power after orthogonalization — the component removed by orthogonalization was carrying the signal. The `light_raw` preset re-runs all six axes without orthogonalization to test whether the raw directions recover that signal.
+
+**New axes** (`light_raw` preset, 20 jailbreak prompts, discriminative midpoint thresholds, L46–L53):
+
+| Axis | Description |
+|------|-------------|
+| `assistant_capping` | Unchanged — assistant axis (no orthogonalization applied) |
+| `pc1_raw` | Raw PC1 of PCA prompts (assistant component not removed) |
+| `jbb_wj_raw` | mean(JBB) − mean(WJ_train), no orthogonalization |
+| `jbb_cal_raw` | mean(JBB) − mean(calibration), no orthogonalization |
+| `jbb_wj_pca_raw` | PCA variant of jbb_wj_raw |
+| `jbb_cal_pca_raw` | PCA variant of jbb_cal_raw |
+
+---
+
+### Experiment 5: Raw axes — light_raw preset
+
+**Threshold separation at L53 (from version.json)**:
+
+| Axis | Benign mean | Jailbreak mean | Separation | Direction |
+|------|:-----------:|:--------------:|:----------:|:---------:|
+| `assistant_capping` | +47.4 | −48.3 | +95.7 | ✓ correct |
+| `jbb_wj_raw` | −96.7 | −124.0 | +27.3 | ✓ correct |
+| `jbb_wj_pca_raw` | −97.0 | −126.0 | +29.1 | ✓ correct |
+| `jbb_cal_raw` | −84.8 | −47.5 | **−37.4** | ✗ inverted |
+| `jbb_cal_pca_raw` | −84.0 | −46.2 | **−37.7** | ✗ inverted |
+| `pc1_raw` | +67.8 | +76.0 | −8.2 | ✗ inverted |
+
+The `jbb_wj` raw axes recover substantial separation (27–29 units vs ~9 after orthogonalization). The `jbb_cal` raw axes show the correct magnitude but **inverted sign**: jailbreak prompts project *higher* than benign. `pc1_raw` remains inverted.
+
+**Results at optimal threshold**:
+
+| Axis | JB refusal | False refusal | Exact match | Selectivity |
+|------|:----------:|:-------------:|:-----------:|:-----------:|
+| `assistant_capping` | 25% | 5% | **85%** | **13.7×** |
+| `jbb_wj_raw` | 25% | 5% | 35% | 1.47× |
+| `jbb_wj_pca_raw` | 25% | 5% | 20% | 1.53× |
+| `pc1_raw` | 25% | **0%** | 25% | ~1× |
+| `jbb_cal_raw` | 25% | 5% | 25% | 0.33× |
+| `jbb_cal_pca_raw` | 25% | 5% | 20% | 0.32× |
+
+Baseline refusal rate: 25%.
+
+No axis improves refusal at the optimal threshold. `assistant_capping` dominates on capability preservation (85% exact match) and selectivity (13.7×). `jbb_cal_raw` and `jbb_cal_pca_raw` have inverted selectivity — the cap fires 3× more on benign prompts than jailbreaks.
+
+**Per-step mechanics at optimal threshold**:
+
+| Axis | Mean JSD | Token match | Entropy Δ | L53 shift | L63 shift |
+|------|:--------:|:-----------:|:---------:|:---------:|:---------:|
+| `assistant_capping` | 0.53 | 0.21 | −0.14 | **+68.7** | **+89.1** |
+| `jbb_wj_raw` | 0.53 | 0.21 | −0.03 | +22.0 | +15.9 |
+| `jbb_wj_pca_raw` | 0.51 | 0.25 | −0.03 | +23.8 | +14.5 |
+| `pc1_raw` | 0.40 | 0.40 | +0.01 | +10.6 | +13.1 |
+| `jbb_cal_raw` | 0.28 | 0.59 | +0.01 | +4.4 | +0.7 |
+| `jbb_cal_pca_raw` | 0.29 | 0.57 | +0.01 | +3.8 | 0.0 |
+
+`assistant_capping` produces by far the largest projection shifts (+89 units at L63) and the largest entropy reduction (−0.14) — the cap is moving activations hard along the axis, sharpening output distributions. Despite this, refusal rate is unchanged at optimal threshold. The cap is doing real work mechanically but not reaching the refusal threshold at this calibration point.
+
+`jbb_cal_raw` barely perturbs anything (+0.7 at L63) — consistent with the inverted polarity. The cap fires constantly but is correcting in the wrong direction.
+
+---
+
+### Why jbb_cal_raw has inverted polarity
+
+`jbb_cal_raw` was computed as:
+
+```
+direction = mean(JBB_refusing_activations) − mean(calibration_benign_activations)
+```
+
+The intended interpretation: points from "benign calibration" toward "refusing/JBB," so capping below a threshold would prevent activations from drifting toward the benign/compliant end.
+
+The problem: **WildJailbreak adversarial prompts contain harmful content** embedded in roleplay framing. Even when the model is about to comply, its activations at prefill reflect that it is processing a harmful request — just like JBB prompts. Both JBB (refusing harmful request) and WildJailbreak (compliant harmful request) cluster on the same side of the axis.
+
+```
+axis: calibration_benign ←————————————————→ JBB_refusing
+      (low projection)                      (high projection)
+
+benign eval prompts:   mean proj = −84.8   ← calibration side (expected)
+WildJailbreak prompts: mean proj = −47.5   ← also JBB/refusing side (unexpected)
+```
+
+Jailbreaks are already above the optimal threshold — the cap never fires on them.
+
+**Root cause:** The axis conflates two independent dimensions: *input content type* (harmful vs benign) and *output compliance* (refusing vs compliant). The harmful-vs-benign input signal dominates because it is the larger and more consistent variance source. The compliance dimension is a subtler, secondary effect that this axis cannot capture.
+
+`jbb_wj_raw` avoids this problem because both sides contain harmful content — the only systematic variance captured is output compliance.
+
+---
+
+### Experiment 6: Polarity-inverted cal axis (cal_inv preset)
+
+**Hypothesis**: if the polarity is the only problem, negating the axis should fix selectivity and produce refusals.
+
+```python
+axis_directions["jbb_cal_raw_inv"] = -jbb_cal_raw_axis
+```
+
+After inversion: jailbreaks project at ~+47 (below optimal threshold +66), benign at ~+85 (above). The cap should now fire selectively on jailbreaks.
+
+**Results (20 jailbreak + 20 benign prompts, optimal threshold)**:
+
+| Metric | jbb_cal_raw (original) | jbb_cal_raw_inv |
+|--------|:---------------------:|:---------------:|
+| JB capped refusal | 25% | **5%** |
+| False refusal | 5% | **0%** |
+| Exact match | 25% | 35% |
+| JB interventions | 179.6 | 565.0 |
+| Benign interventions | 552.2 | 152.4 |
+| Selectivity | 0.33× | **3.71×** |
+
+Selectivity flipped dramatically (0.33× → 3.71×) — the inversion fixed the polarity exactly as expected. The cap now fires 3.7× more on jailbreaks than benign prompts.
+
+However, jailbreak refusal fell from 25% to 5% — the inverted cap is making things **worse**, converting 4 previously-refused prompts to compliant.
+
+**Why the inversion makes refusals worse**: the inverted axis points from "JBB/refusing-like" toward "benign calibration-like." Enforcing a minimum projection on this inverted direction pushes activations toward the benign-calibration region — which represents the model *helpfully answering normal questions*, not refusing. The result is the opposite of a refusal: the model is nudged toward a cooperative, compliant state.
+
+**Per-step confirmation**: `jbb_cal_raw_inv` is the only axis that *increases* entropy (+0.07) rather than reducing it. Steering toward the benign-calibration direction makes the model more uncertain rather than more committed to refusing. L63 projection shift is near zero (+0.7) — even with high intervention frequency, the cap barely moves deep representations along the axis.
+
+**Conclusion**: the `jbb_cal` axis family is semantically useless for safety regardless of polarity. It discriminates input content (harmful request vs benign query) rather than output compliance (refusing vs compliant). In the positive direction it produces a harmful-request detector; in the negative direction it produces a benign-query enforcer. Neither is a refusal detector.
+
+**What aggressive positive steering along jbb_cal would mean**: forcing the model to process everything as if it just received a direct harmful request it is about to refuse. On jailbreak prompts this might fight back against compliance, but only by amplifying the "harmful content recognition" signal — not by directly reinstating the refusal circuit. On benign prompts it would make the model treat "What is the capital of France?" with the internal activation profile of a bomb-making request: evasive, over-cautious, adding unsolicited safety disclaimers, or half-refusing innocuous questions. Selectivity would collapse entirely.
+
+---
+
+### Pareto frontier summary (all axes, optimal threshold)
+
+Three axes are Pareto non-dominated across (jb_refusal ↑, false_refusal ↓, exact_match ↑, selectivity ↑):
+
+| Axis | Why it survives |
+|------|----------------|
+| `assistant_capping` | Wins on exact_match (85%) and selectivity (13.7×) by a wide margin |
+| `pc1_raw` | Only axis with 0% false refusal and non-negative safety |
+| `jbb_cal_raw_inv` | Degenerate: on the frontier only because it has negative safety — no other axis is simultaneously better on all four metrics |
+
+All other axes are dominated. `jbb_wj_raw` and `jbb_wj_pca_raw` are both beaten by `assistant_capping` on every metric at optimal threshold; their advantage only appears at aggressive thresholds where refusal climbs to 55–75% but capability degrades severely (exact match falls to 0–5%, false refusal rises to 10%).
+
+The practical frontier reduces to **`assistant_capping` vs `pc1_raw`**: whether you prefer 85% exact match with 13.7× selectivity (assistant) or 0% false refusal with near-neutral safety effect (pc1).
+
+---
