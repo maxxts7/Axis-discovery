@@ -113,10 +113,9 @@ PRESETS = {
     ),
     "cross_axis": dict(
         VERSION="cross_axis",
-        VERSION_NOTES="Cross-axis capping: detect with assistant axis (high selectivity), "
-                      "correct with jbb_wj_pca_raw axis (high refusal power). "
-                      "Two thresholds: optimal (discriminative midpoint) and std_jailbreak "
-                      "(aggressive, where jbb_wj showed 65% refusal rate).",
+        VERSION_NOTES="Cross-axis capping: detect with assistant axis (optimal threshold), "
+                      "correct with jbb_wj_pca_raw axis at mean_benign (moderate) and "
+                      "std_jailbreak (aggressive) correction thresholds.",
         N_PROMPTS=20,
         ALPHAS=[0.1, 0.25, 0.5],
         MAX_NEW_TOKENS=128,
@@ -126,14 +125,15 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
+        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
         AXES=["assistant_capping"],
-        THRESHOLD_TYPES=["optimal", "std_jailbreak"],
+        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
     ),
     "cross_sanity": dict(
         VERSION="cross_sanity",
-        VERSION_NOTES="Cross-axis sanity check — 5 prompts, single threshold, verify "
-                      "the cross-axis hook fires, n_triggered and n_corrected populate, "
-                      "and outputs differ from simple assistant capping.",
+        VERSION_NOTES="Cross-axis sanity check — 5 prompts. Detect with assistant axis "
+                      "(optimal threshold), correct with jbb_wj_pca_raw at mean_benign "
+                      "and std_jailbreak correction thresholds.",
         N_PROMPTS=5,
         ALPHAS=[0.25],
         MAX_NEW_TOKENS=64,
@@ -143,14 +143,15 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
-        THRESHOLD_TYPES=["optimal"],
+        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
         AXES=["assistant_capping"],
+        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
     ),
     "cross_full": dict(
         VERSION="cross_full",
         VERSION_NOTES="Cross-axis full run — 100 jailbreak prompts. "
-                      "Compares assistant-only capping vs cross-axis (assistant detect × "
-                      "jbb_wj_pca_raw correct) at optimal and std_jailbreak thresholds.",
+                      "Detect with assistant axis (optimal threshold), correct with "
+                      "jbb_wj_pca_raw at mean_benign and std_jailbreak thresholds.",
         N_PROMPTS=100,
         ALPHAS=[0.1, 0.25, 0.5, 0.75],
         MAX_NEW_TOKENS=256,
@@ -160,8 +161,9 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
+        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
         AXES=["assistant_capping"],
-        THRESHOLD_TYPES=["optimal", "std_jailbreak"],
+        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
     ),
 }
 
@@ -581,34 +583,46 @@ def main():
         print(f"  cos(assistant) — raw axes: {cos_strs}")
 
     # Optional allowlist — None means all axes; a list restricts to named subset.
-    # Set AXES in a preset to isolate specific axes without editing the spec above.
-    # When CROSS_AXIS is enabled, also keep the correction axis so it survives
-    # filtering and gets thresholds computed.
+    # When CROSS_AXIS is enabled, also keep the correction axis so it gets
+    # thresholds computed, but separate it from the main experiment axes.
+    all_axis_directions = dict(axis_directions)  # full set for threshold computation
     allowed = cfg.get("AXES")
     if allowed is not None:
-        keep = set(allowed)
         if cfg.get("CROSS_AXIS") and "CROSS_CORRECT_AXIS" in cfg:
-            keep.add(cfg["CROSS_CORRECT_AXIS"])
-        axis_directions = {k: v for k, v in axis_directions.items() if k in keep}
+            # Keep correction axis in all_axis_directions for threshold computation
+            all_axis_directions = {
+                k: v for k, v in axis_directions.items()
+                if k in set(allowed) | {cfg["CROSS_CORRECT_AXIS"]}
+            }
+        # Main experiment only uses the allowlisted axes
+        axis_directions = {k: v for k, v in axis_directions.items() if k in allowed}
 
-    print(f"  Axis directions: {list(axis_directions.keys())}")
+    print(f"  Axis directions (main): {list(axis_directions.keys())}")
+    if cfg.get("CROSS_AXIS"):
+        print(f"  Axis directions (cross): {list(all_axis_directions.keys())}")
 
     # --- Compute discriminative thresholds ---
     # τ = midpoint between mean(benign) and mean(jailbreak) at each cap layer.
     # Uses WildJailbreak train split for the jailbreak side (no eval contamination).
+    # Compute for ALL axes (including correction axis) — full threshold dict is
+    # needed by the cross-axis section for mean_benign/std_jailbreak lookups.
     calibration_prompts = CALIBRATION_PROMPTS[:cfg["N_CALIBRATION"]]
     jailbreak_train_prompts = load_wildjailbreak_train(n_prompts=cfg["N_COMPLIANCE"])
 
     print(f"\nComputing discriminative thresholds "
           f"({len(calibration_prompts)} benign, {len(jailbreak_train_prompts)} jailbreak)...")
-    thresholds = compute_discriminative_thresholds(
+    all_thresholds = compute_discriminative_thresholds(
         exp,
         benign_prompts=calibration_prompts,
         jailbreak_prompts=jailbreak_train_prompts,
-        axis_directions=axis_directions,
+        axis_directions=all_axis_directions,
         cap_layers=cap_layers,
     )
 
+    # For the main experiment: filter to only the axes and threshold types needed
+    thresholds = {
+        axis: all_thresholds[axis] for axis in axis_directions
+    }
     if "THRESHOLD_TYPES" in cfg:
         keep = set(cfg["THRESHOLD_TYPES"])
         thresholds = {
@@ -727,9 +741,9 @@ def main():
 
     if cfg.get("CROSS_AXIS"):
         correct_axis_name = cfg["CROSS_CORRECT_AXIS"]
-        if correct_axis_name not in axis_directions:
+        if correct_axis_name not in all_axis_directions:
             print(f"\nERROR: cross-axis correction axis '{correct_axis_name}' not found.")
-            print(f"  Available: {list(axis_directions.keys())}")
+            print(f"  Available: {list(all_axis_directions.keys())}")
         else:
             print(f"\n{'='*60}")
             print(f"Running cross-axis experiment:")
@@ -737,19 +751,22 @@ def main():
             print(f"  Correct: {correct_axis_name}")
             print(f"{'='*60}")
 
-            detect_axis = axis_directions["assistant_capping"]
-            correct_axis = axis_directions[correct_axis_name]
-            detect_thresholds = thresholds["assistant_capping"]
-            correct_thresholds = thresholds[correct_axis_name]
+            detect_axis = all_axis_directions["assistant_capping"]
+            correct_axis = all_axis_directions[correct_axis_name]
+            detect_thresholds = all_thresholds["assistant_capping"]
+            correct_thresholds = all_thresholds[correct_axis_name]
 
             cross_label = f"cross__assistant_x_{correct_axis_name}"
             final_layer = exp.num_layers - 1
             track_layers = sorted({cap_layers[-1], final_layer})
             cap_layers_str = f"L{cap_layers[0]}-L{cap_layers[-1]}"
 
-            # Collect all threshold type keys (e.g. 'optimal', 'mean_benign', ...)
-            first_layer = cap_layers[0]
-            alpha_keys = list(detect_thresholds[first_layer].keys())
+            # Detection always uses "optimal" (discriminative midpoint — best selectivity).
+            # Correction iterates over CROSS_CORRECT_THRESHOLDS (e.g. mean_benign, std_jailbreak)
+            # which are more aggressive thresholds that push projections into refusal territory.
+            detect_key = "optimal"
+            correct_keys = cfg.get("CROSS_CORRECT_THRESHOLDS",
+                                   ["mean_benign", "std_jailbreak"])
 
             cross_gen_rows = []
             cross_step_rows = []
@@ -769,7 +786,7 @@ def main():
                     # Baseline (reuse from earlier for jailbreak; generate for benign)
                     try:
                         bl_ids, bl_scores, bl_projs = _generate_baseline_multi_axis(
-                            exp, input_ids, axis_directions, track_layers,
+                            exp, input_ids, all_axis_directions, track_layers,
                             cfg["MAX_NEW_TOKENS"], TEMPERATURE, DO_SAMPLE,
                         )
                         bl_text = exp.tokenizer.decode(
@@ -781,17 +798,18 @@ def main():
                         )
                         continue
 
-                    for alpha_key in alpha_keys:
+                    for correct_key in correct_keys:
                         detect_per_layer = {
-                            li: detect_thresholds[li][alpha_key]
+                            li: detect_thresholds[li][detect_key]
                             for li in cap_layers
                         }
                         correct_per_layer = {
-                            li: correct_thresholds[li][alpha_key]
+                            li: correct_thresholds[li][correct_key]
                             for li in cap_layers
                         }
                         tau_detect_repr = detect_per_layer[cap_layers[-1]]
                         tau_correct_repr = correct_per_layer[cap_layers[-1]]
+                        alpha_key = correct_key
 
                         try:
                             pt_ids, pt_scores, pt_projs, n_triggered, n_corrected = \
