@@ -580,9 +580,14 @@ def main():
 
     # Optional allowlist — None means all axes; a list restricts to named subset.
     # Set AXES in a preset to isolate specific axes without editing the spec above.
+    # When CROSS_AXIS is enabled, also keep the correction axis so it survives
+    # filtering and gets thresholds computed.
     allowed = cfg.get("AXES")
     if allowed is not None:
-        axis_directions = {k: v for k, v in axis_directions.items() if k in allowed}
+        keep = set(allowed)
+        if cfg.get("CROSS_AXIS") and "CROSS_CORRECT_AXIS" in cfg:
+            keep.add(cfg["CROSS_CORRECT_AXIS"])
+        axis_directions = {k: v for k, v in axis_directions.items() if k in keep}
 
     print(f"  Axis directions: {list(axis_directions.keys())}")
 
