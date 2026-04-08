@@ -109,6 +109,58 @@ PRESETS = {
         N_COMPLIANCE=20,
         SKIP_ORTHOGONALIZED=True,
     ),
+    "cross_axis": dict(
+        VERSION="cross_axis",
+        VERSION_NOTES="Cross-axis capping: detect with assistant axis (high selectivity), "
+                      "correct with jbb_wj_pca_raw axis (high refusal power). "
+                      "Two thresholds: optimal (discriminative midpoint) and std_jailbreak "
+                      "(aggressive, where jbb_wj showed 65% refusal rate).",
+        N_PROMPTS=20,
+        ALPHAS=[0.1, 0.25, 0.5],
+        MAX_NEW_TOKENS=128,
+        OUTPUT_DIR="results/capping_cross_axis",
+        N_CALIBRATION=20,
+        N_COMPLIANCE=20,
+        SKIP_ORTHOGONALIZED=True,
+        CROSS_AXIS=True,
+        CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
+        AXES=["assistant_capping"],
+        THRESHOLD_TYPES=["optimal", "std_jailbreak"],
+    ),
+    "cross_sanity": dict(
+        VERSION="cross_sanity",
+        VERSION_NOTES="Cross-axis sanity check — 5 prompts, single threshold, verify "
+                      "the cross-axis hook fires, n_triggered and n_corrected populate, "
+                      "and outputs differ from simple assistant capping.",
+        N_PROMPTS=5,
+        ALPHAS=[0.25],
+        MAX_NEW_TOKENS=64,
+        OUTPUT_DIR="results/capping_cross_sanity",
+        N_CALIBRATION=10,
+        N_COMPLIANCE=10,
+        SKIP_ORTHOGONALIZED=True,
+        CROSS_AXIS=True,
+        CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
+        THRESHOLD_TYPES=["optimal"],
+        AXES=["assistant_capping"],
+    ),
+    "cross_full": dict(
+        VERSION="cross_full",
+        VERSION_NOTES="Cross-axis full run — 100 jailbreak prompts. "
+                      "Compares assistant-only capping vs cross-axis (assistant detect × "
+                      "jbb_wj_pca_raw correct) at optimal and std_jailbreak thresholds.",
+        N_PROMPTS=100,
+        ALPHAS=[0.1, 0.25, 0.5, 0.75],
+        MAX_NEW_TOKENS=256,
+        OUTPUT_DIR="results/capping_cross_full",
+        N_CALIBRATION=30,
+        N_COMPLIANCE=50,
+        SKIP_ORTHOGONALIZED=True,
+        CROSS_AXIS=True,
+        CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
+        AXES=["assistant_capping"],
+        THRESHOLD_TYPES=["optimal", "std_jailbreak"],
+    ),
 }
 
 # ============================================================
@@ -420,9 +472,12 @@ def main():
 
     from capping_experiment import (
         SteeringExperiment, compute_directions, MODEL_CONFIGS,
-        compute_thresholds, compute_discriminative_thresholds,
+        compute_discriminative_thresholds, validate_thresholds,
         run_capping_experiment, compute_compliance_axis,
-        compute_pca_compliance_axis, run_capability_eval,
+        compute_pca_compliance_axis, compute_pc1_axis,
+        run_capability_eval, regex_refusal_detector,
+        generate_cross_capped, compute_step_metrics,
+        _generate_baseline_multi_axis,
     )
 
     output_dir = Path(args.output_dir or cfg["OUTPUT_DIR"])
@@ -436,140 +491,98 @@ def main():
     cap_layers = CAP_LAYERS
     print(f"  Cap layers: L{cap_layers[0]}–L{cap_layers[-1]} ({len(cap_layers)} layers)")
 
-    # --- Compute directions ---
-    # assistant_toward: positive assistant-axis direction (unit vector)
-    # pca_pc1_positive: positive PC1 direction (orthogonalized against assistant axis)
-    print("\nComputing directions...")
+    # --- Compute assistant axis ---
+    print("\nComputing assistant axis...")
     all_directions = compute_directions(
         exp,
-        target_layer=cap_layers[-1],   # use last cap layer as the representative layer
-        n_random_dirs=0,
-        seed=SEED,
-        factual_prompts=FACTUAL_PROMPTS,
-        creative_prompts=CREATIVE_PROMPTS,
-        pca_prompts=PCA_PROMPTS,
+        target_layer=cap_layers[-1],
         enable_assistant=True,
         enable_random=False,
         enable_fc=False,
-        enable_pca=True,
+        enable_pca=False,
     )
+    assistant_axis = all_directions["assistant_toward"]
+    axis_directions = {"assistant_capping": assistant_axis}
 
     skip_ortho = cfg.get("SKIP_ORTHOGONALIZED", False)
 
-    # Map to capping-experiment axis names
-    assistant_axis = all_directions["assistant_toward"]
-    axis_directions = {"assistant_capping": assistant_axis}
+    # --- PC1 axes ---
+    # Both variants computed via compute_pc1_axis; orthogonalized uses assistant_axis,
+    # raw does not. Both are negated internally (ceiling on pc1_pos = floor on pc1_neg).
+    print("\nComputing PC1 axes...")
     if not skip_ortho:
-        axis_directions["pc1_capping"] = all_directions["pca_pc1_negative"]  # orthogonalized
+        pc1_ortho = compute_pc1_axis(
+            exp, PCA_PROMPTS, cap_layers,
+            assistant_axis=assistant_axis, axis_name="pc1_capping",
+        )
+        if pc1_ortho is not None:
+            axis_directions["pc1_capping"] = pc1_ortho
 
-    # Raw PC1 (no orthogonalization) — compute_directions() always orthogonalizes
-    # PC1 against the assistant axis internally, so we run PCA directly here.
-    print("\nComputing raw (non-orthogonalized) PC1...")
-    import torch as _torch
-    from tqdm import tqdm as _tqdm
-    _pca_acts = []
-    for _p in _tqdm(PCA_PROMPTS, desc="  Raw PC1", leave=False):
-        _ids = exp.tokenize(_p)
-        _acts, _ = exp.get_baseline_trajectory(_ids)
-        _pca_acts.append(_acts[cap_layers[-1]].float())
-    _act_matrix = _torch.stack(_pca_acts).float()
-    _act_centered = _act_matrix - _act_matrix.mean(dim=0)
-    _, _S, _Vt = _torch.linalg.svd(_act_centered, full_matrices=False)
-    raw_pc1 = _Vt[0].cpu()
-    raw_pc1_var = (_S[0] ** 2 / (_S ** 2).sum()).item() * 100
-    cos_pc1_assistant = (raw_pc1 @ assistant_axis).item()
-    print(f"  Raw PC1: var_explained={raw_pc1_var:.1f}%  cos(assistant)={cos_pc1_assistant:.4f}")
-    axis_directions["pc1_raw"] = -raw_pc1   # ceiling on pc1_positive = floor on pc1_negative
+    pc1_raw = compute_pc1_axis(exp, PCA_PROMPTS, cap_layers, axis_name="pc1_raw")
+    if pc1_raw is not None:
+        cos_pc1 = (pc1_raw @ assistant_axis).item()
+        print(f"  pc1_raw cos(assistant): {cos_pc1:.4f}")
+        axis_directions["pc1_raw"] = pc1_raw
 
     # --- Compliance axes ---
-    # Two variants, both using JBB-Behaviors as the refusing side:
-    #   jbb_wj_compliance  — compliant side: WildJailbreak train (jailbreak-specific)
-    #   jbb_cal_compliance — compliant side: CALIBRATION_PROMPTS (benign baseline)
-    # Both orthogonalized against the assistant axis to isolate additional signal.
+    # Refusing side: JBB-Behaviors (model refuses bare harmful goals).
+    # Compliant side: either WildJailbreak train (jailbreak-specific) or
+    # CALIBRATION_PROMPTS (benign baseline). Both orthogonalized and raw
+    # variants are tested; raw keeps the assistant-aligned component to see
+    # whether orthogonalization destroys discriminative power.
     n_compliance = cfg["N_COMPLIANCE"]
     print(f"\nBuilding compliance axes ({n_compliance} prompts per side)...")
 
-    refusing_prompts  = load_jbb_behaviors(n_prompts=n_compliance)
-    compliant_wj      = load_wildjailbreak_train(n_prompts=n_compliance)
-    compliant_cal     = CALIBRATION_PROMPTS[:n_compliance]
+    refusing_prompts = load_jbb_behaviors(n_prompts=n_compliance)
+    compliant_prompts = {
+        "wj":  load_wildjailbreak_train(n_prompts=n_compliance),
+        "cal": CALIBRATION_PROMPTS[:n_compliance],
+    }
 
-    # Orthogonalized variants (assistant component removed) — skipped in light_raw preset
-    if not skip_ortho:
-        jbb_wj_axis = compute_compliance_axis(
-            exp, refusing_prompts, compliant_wj, cap_layers,
-            assistant_axis=assistant_axis, axis_name="jbb_wj",
+    # Each spec: (axis_name, fn, compliant_key, orthogonalize, invert_as)
+    # orthogonalize=True  → pass assistant_axis (removes assistant component)
+    # orthogonalize=False → pass assistant_axis=None (raw, no projection removed)
+    # invert_as           → also store the negated axis under this name
+    COMPLIANCE_SPECS = [
+        ("jbb_wj_compliance",  compute_compliance_axis,     "wj",  True,  None),
+        ("jbb_cal_compliance", compute_compliance_axis,     "cal", True,  None),
+        ("jbb_wj_raw",         compute_compliance_axis,     "wj",  False, None),
+        ("jbb_cal_raw",        compute_compliance_axis,     "cal", False, "jbb_cal_raw_inv"),
+        ("jbb_wj_pca",         compute_pca_compliance_axis, "wj",  True,  None),
+        ("jbb_cal_pca",        compute_pca_compliance_axis, "cal", True,  None),
+        ("jbb_wj_pca_raw",     compute_pca_compliance_axis, "wj",  False, None),
+        ("jbb_cal_pca_raw",    compute_pca_compliance_axis, "cal", False, None),
+    ]
+
+    for name, fn, compliant_key, orthogonalize, invert_as in COMPLIANCE_SPECS:
+        if orthogonalize and skip_ortho:
+            continue
+        axis = fn(
+            exp,
+            refusing_prompts,
+            compliant_prompts[compliant_key],
+            cap_layers,
+            assistant_axis=assistant_axis if orthogonalize else None,
+            axis_name=name,
         )
-        jbb_cal_axis = compute_compliance_axis(
-            exp, refusing_prompts, compliant_cal, cap_layers,
-            assistant_axis=assistant_axis, axis_name="jbb_cal",
+        if axis is not None:
+            axis_directions[name] = axis
+            if invert_as:
+                axis_directions[invert_as] = -axis
+
+    # Log cos(assistant) for all raw axes so polarity is visible at a glance
+    raw_names = [n for n in axis_directions if "_raw" in n]
+    if raw_names:
+        cos_strs = "  ".join(
+            f"{n}={(axis_directions[n] @ assistant_axis).item():.4f}" for n in raw_names
         )
-        if jbb_wj_axis is not None:
-            axis_directions["jbb_wj_compliance"]  = jbb_wj_axis
-        if jbb_cal_axis is not None:
-            axis_directions["jbb_cal_compliance"] = jbb_cal_axis
+        print(f"  cos(assistant) — raw axes: {cos_strs}")
 
-    # Raw variants (no orthogonalization) — keeps the assistant-aligned component.
-    # If the raw direction had high cos(assistant), orthogonalizing destroys its
-    # discriminative power. These let us test whether that component matters.
-    jbb_wj_raw_axis = compute_compliance_axis(
-        exp, refusing_prompts, compliant_wj, cap_layers,
-        assistant_axis=None, axis_name="jbb_wj_raw",
-    )
-    jbb_cal_raw_axis = compute_compliance_axis(
-        exp, refusing_prompts, compliant_cal, cap_layers,
-        assistant_axis=None, axis_name="jbb_cal_raw",
-    )
-
-    if jbb_wj_raw_axis is not None:
-        # Log cos(assistant) for the raw direction so we can see the overlap
-        cos_wj  = (jbb_wj_raw_axis  @ assistant_axis).item()
-        cos_cal = (jbb_cal_raw_axis @ assistant_axis).item() if jbb_cal_raw_axis is not None else None
-        print(f"  Raw compliance cos(assistant): jbb_wj={cos_wj:.4f}  jbb_cal={cos_cal:.4f}")
-        axis_directions["jbb_wj_raw"]  = jbb_wj_raw_axis
-    if jbb_cal_raw_axis is not None:
-        axis_directions["jbb_cal_raw"] = jbb_cal_raw_axis
-        # Inverted variant: jailbreaks project higher than benign on the raw axis
-        # (both are harmful-content inputs, so they cluster on the JBB side).
-        # Negating flips the polarity so jailbreaks land below the threshold and
-        # the cap fires on them rather than on benign prompts.
-        axis_directions["jbb_cal_raw_inv"] = -jbb_cal_raw_axis
-
-    # PCA-based compliance axes (orthogonalized) — skipped in light_raw preset
-    if not skip_ortho:
-        jbb_wj_pca_axis = compute_pca_compliance_axis(
-            exp, refusing_prompts, compliant_wj, cap_layers,
-            assistant_axis=assistant_axis, axis_name="jbb_wj_pca",
-        )
-        jbb_cal_pca_axis = compute_pca_compliance_axis(
-            exp, refusing_prompts, compliant_cal, cap_layers,
-            assistant_axis=assistant_axis, axis_name="jbb_cal_pca",
-        )
-        if jbb_wj_pca_axis is not None:
-            axis_directions["jbb_wj_pca"]  = jbb_wj_pca_axis
-        if jbb_cal_pca_axis is not None:
-            axis_directions["jbb_cal_pca"] = jbb_cal_pca_axis
-
-    # PCA-based raw variants (no orthogonalization)
-    jbb_wj_pca_raw_axis = compute_pca_compliance_axis(
-        exp, refusing_prompts, compliant_wj, cap_layers,
-        assistant_axis=None, axis_name="jbb_wj_pca_raw",
-    )
-    jbb_cal_pca_raw_axis = compute_pca_compliance_axis(
-        exp, refusing_prompts, compliant_cal, cap_layers,
-        assistant_axis=None, axis_name="jbb_cal_pca_raw",
-    )
-
-    if jbb_wj_pca_raw_axis is not None:
-        cos_wj_pca  = (jbb_wj_pca_raw_axis  @ assistant_axis).item()
-        cos_cal_pca = (jbb_cal_pca_raw_axis @ assistant_axis).item() if jbb_cal_pca_raw_axis is not None else None
-        print(f"  Raw PCA cos(assistant): jbb_wj_pca={cos_wj_pca:.4f}  jbb_cal_pca={cos_cal_pca:.4f}")
-        axis_directions["jbb_wj_pca_raw"]  = jbb_wj_pca_raw_axis
-    if jbb_cal_pca_raw_axis is not None:
-        axis_directions["jbb_cal_pca_raw"] = jbb_cal_pca_raw_axis
-
-    # Optional allowlist — restrict to a named subset of axes
-    if "AXES" in cfg:
-        axis_directions = {k: v for k, v in axis_directions.items() if k in cfg["AXES"]}
+    # Optional allowlist — None means all axes; a list restricts to named subset.
+    # Set AXES in a preset to isolate specific axes without editing the spec above.
+    allowed = cfg.get("AXES")
+    if allowed is not None:
+        axis_directions = {k: v for k, v in axis_directions.items() if k in allowed}
 
     print(f"  Axis directions: {list(axis_directions.keys())}")
 
@@ -598,6 +611,8 @@ def main():
             }
             for axis, layer_taus in thresholds.items()
         }
+
+    validate_thresholds(thresholds, axis_directions, cap_layers)
 
     # --- Load jailbreak dataset ---
     print("\nLoading jailbreak dataset...")
@@ -678,6 +693,7 @@ def main():
         temperature=TEMPERATURE,
         do_sample=DO_SAMPLE,
         version=version,
+        refusal_fn=regex_refusal_detector,
     )
 
     # Print summary
@@ -694,6 +710,168 @@ def main():
     gen_df.to_csv(output_dir / "generations.csv", index=False)
     step_df.to_csv(output_dir / "per_step_metrics.csv", index=False)
     cap_eval_df.to_csv(output_dir / "capability_eval.csv", index=False)
+
+    # ============================================================
+    # CROSS-AXIS EXPERIMENT
+    # ============================================================
+    # Detect with assistant axis (high selectivity), correct with
+    # a compliance axis (high refusal power). Runs on both jailbreak
+    # and benign prompts for direct comparison with simple capping.
+
+    if cfg.get("CROSS_AXIS"):
+        correct_axis_name = cfg["CROSS_CORRECT_AXIS"]
+        if correct_axis_name not in axis_directions:
+            print(f"\nERROR: cross-axis correction axis '{correct_axis_name}' not found.")
+            print(f"  Available: {list(axis_directions.keys())}")
+        else:
+            print(f"\n{'='*60}")
+            print(f"Running cross-axis experiment:")
+            print(f"  Detect:  assistant_capping (selectivity ~13x)")
+            print(f"  Correct: {correct_axis_name}")
+            print(f"{'='*60}")
+
+            detect_axis = axis_directions["assistant_capping"]
+            correct_axis = axis_directions[correct_axis_name]
+            detect_thresholds = thresholds["assistant_capping"]
+            correct_thresholds = thresholds[correct_axis_name]
+
+            cross_label = f"cross__assistant_x_{correct_axis_name}"
+            final_layer = exp.num_layers - 1
+            track_layers = sorted({cap_layers[-1], final_layer})
+            cap_layers_str = f"L{cap_layers[0]}-L{cap_layers[-1]}"
+
+            # Collect all threshold type keys (e.g. 'optimal', 'mean_benign', ...)
+            first_layer = cap_layers[0]
+            alpha_keys = list(detect_thresholds[first_layer].keys())
+
+            cross_gen_rows = []
+            cross_step_rows = []
+
+            # --- Jailbreak prompts ---
+            all_prompts = [("jailbreak", prompts, prompt_categories)]
+            all_prompts.append(("benign", calibration_prompts, None))
+
+            for prompt_set_name, prompt_list, categories in all_prompts:
+                print(f"\n  Cross-axis on {prompt_set_name} prompts ({len(prompt_list)})...")
+
+                for prompt_idx, prompt_text in enumerate(prompt_list):
+                    input_ids = exp.tokenize(prompt_text)
+                    prompt_len = input_ids.shape[1]
+                    category = categories[prompt_idx] if categories else "benign"
+
+                    # Baseline (reuse from earlier for jailbreak; generate for benign)
+                    try:
+                        bl_ids, bl_scores, bl_projs = _generate_baseline_multi_axis(
+                            exp, input_ids, axis_directions, track_layers,
+                            cfg["MAX_NEW_TOKENS"], TEMPERATURE, DO_SAMPLE,
+                        )
+                        bl_text = exp.tokenizer.decode(
+                            bl_ids[0, prompt_len:], skip_special_tokens=True
+                        )
+                    except Exception:
+                        logging.getLogger("capping").exception(
+                            "  FAILED baseline for %s prompt %d", prompt_set_name, prompt_idx
+                        )
+                        continue
+
+                    for alpha_key in alpha_keys:
+                        detect_per_layer = {
+                            li: detect_thresholds[li][alpha_key]
+                            for li in cap_layers
+                        }
+                        correct_per_layer = {
+                            li: correct_thresholds[li][alpha_key]
+                            for li in cap_layers
+                        }
+                        tau_detect_repr = detect_per_layer[cap_layers[-1]]
+                        tau_correct_repr = correct_per_layer[cap_layers[-1]]
+
+                        try:
+                            pt_ids, pt_scores, pt_projs, n_triggered, n_corrected = \
+                                generate_cross_capped(
+                                    exp, input_ids, cap_layers,
+                                    detect_axis, correct_axis,
+                                    detect_per_layer, correct_per_layer,
+                                    track_layers, detect_axis,
+                                    cfg["MAX_NEW_TOKENS"], TEMPERATURE, DO_SAMPLE,
+                                )
+                        except Exception:
+                            logging.getLogger("capping").exception(
+                                "  FAILED cross-axis %s prompt %d alpha=%s",
+                                prompt_set_name, prompt_idx, alpha_key,
+                            )
+                            continue
+
+                        pt_text = exp.tokenizer.decode(
+                            pt_ids[0, prompt_len:], skip_special_tokens=True
+                        )
+
+                        cross_gen_rows.append({
+                            "version": version,
+                            "prompt_idx": prompt_idx,
+                            "prompt_set": prompt_set_name,
+                            "prompt_text": prompt_text,
+                            "direction_type": cross_label,
+                            "detect_axis": "assistant_capping",
+                            "correct_axis": correct_axis_name,
+                            "alpha": alpha_key,
+                            "threshold_detect": tau_detect_repr,
+                            "threshold_correct": tau_correct_repr,
+                            "cap_layers": cap_layers_str,
+                            "baseline_text": bl_text,
+                            "perturbed_text": pt_text,
+                            "baseline_len_tokens": bl_ids.shape[1] - prompt_len,
+                            "perturbed_len_tokens": pt_ids.shape[1] - prompt_len,
+                            "n_triggered": n_triggered,
+                            "n_corrected": n_corrected,
+                            "prompt_category": category,
+                        })
+
+                        step_metrics = compute_step_metrics(
+                            bl_scores, pt_scores, bl_ids, pt_ids,
+                            exp.tokenizer, prompt_len,
+                        )
+                        for sm in step_metrics:
+                            t_idx = sm["step"]
+                            sm["version"] = version
+                            sm["prompt_idx"] = prompt_idx
+                            sm["prompt_set"] = prompt_set_name
+                            sm["direction_type"] = cross_label
+                            sm["alpha"] = alpha_key
+                            sm["prompt_category"] = category
+                            for layer_idx in track_layers:
+                                bl_layer = bl_projs.get("assistant_capping", {}).get(layer_idx, [])
+                                pt_layer = pt_projs.get(layer_idx, [])
+                                sm[f"baseline_axis_proj_L{layer_idx}"] = \
+                                    bl_layer[t_idx] if t_idx < len(bl_layer) else None
+                                sm[f"perturbed_axis_proj_L{layer_idx}"] = \
+                                    pt_layer[t_idx] if t_idx < len(pt_layer) else None
+                        cross_step_rows.extend(step_metrics)
+
+                        del pt_ids, pt_scores, pt_projs
+
+                    del bl_ids, bl_scores, bl_projs
+                    import torch as _torch
+                    _torch.cuda.empty_cache()
+
+            cross_gen_df = pd.DataFrame(cross_gen_rows)
+            cross_step_df = pd.DataFrame(cross_step_rows)
+
+            cross_gen_df.to_csv(output_dir / "cross_axis_generations.csv", index=False)
+            cross_step_df.to_csv(output_dir / "cross_axis_per_step_metrics.csv", index=False)
+
+            print(f"\n  Cross-axis results:")
+            print(f"    cross_axis_generations.csv       {len(cross_gen_df)} rows")
+            print(f"    cross_axis_per_step_metrics.csv  {len(cross_step_df)} rows")
+
+            if len(cross_gen_df) > 0:
+                print("\n  Cross-axis summary (n_triggered vs n_corrected):")
+                summary = cross_gen_df.groupby(["prompt_set", "alpha"]).agg(
+                    mean_triggered=("n_triggered", "mean"),
+                    mean_corrected=("n_corrected", "mean"),
+                    n_prompts=("prompt_idx", "nunique"),
+                ).round(1)
+                print(summary.to_string())
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed / 60:.1f} minutes.")
