@@ -21,7 +21,7 @@ OUTPUT_DIRS = {
 }
 
 # Columns present in all experiments; missing ones are skipped gracefully
-SORT_COLS = ["prompt_idx", "direction_type", "alpha", "perturb_mode", "step"]
+SORT_COLS = ["prompt_idx", "step"]
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
 
     # Files that are sliced across GPUs and need concatenation
     merge_files = [
-        "generations.csv",
+        "assistant_axis_generations.csv",
         "per_step_metrics.csv",
         "cross_axis_generations.csv",
         "cross_axis_per_step_metrics.csv",
@@ -44,7 +44,7 @@ def main():
     for fname in merge_files:
         parts = [pd.read_csv(d / fname) for d in tmp_dirs if (d / fname).exists()]
         if not parts:
-            if fname in ("generations.csv", "per_step_metrics.csv"):
+            if fname in ("assistant_axis_generations.csv", "per_step_metrics.csv"):
                 print(f"  WARNING: no data for {fname}")
             continue
         merged = pd.concat(parts, ignore_index=True)
@@ -53,14 +53,15 @@ def main():
         merged.to_csv(final_dir / fname, index=False)
         print(f"  {fname}: {len(merged)} rows")
 
-    # capability_eval.csv is identical across GPUs (same calibration prompts),
+    # Capability eval files are identical across GPUs (same calibration prompts),
     # so just copy from the first available GPU
-    for d in tmp_dirs:
-        cap_eval = d / "capability_eval.csv"
-        if cap_eval.exists():
-            shutil.copy2(cap_eval, final_dir / "capability_eval.csv")
-            print(f"  capability_eval.csv copied from {d.name}")
-            break
+    for cap_fname in ["assistant_axis_capability_eval.csv", "cross_axis_capability_eval.csv"]:
+        for d in tmp_dirs:
+            cap_eval = d / cap_fname
+            if cap_eval.exists():
+                shutil.copy2(cap_eval, final_dir / cap_fname)
+                print(f"  {cap_fname} copied from {d.name}")
+                break
 
     version_src = tmp_dirs[0] / "version.json"
     if version_src.exists():

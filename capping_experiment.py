@@ -1187,10 +1187,9 @@ def run_capping_experiment(
         axis_directions: axis_name -> unit vector (float32, CPU).
 
     Returns:
-        (generations_df, step_metrics_df) — same column schema as
-        run_generation_experiment(), with two additions:
-            threshold_value       — the τ used for this condition
-            n_capping_interventions — decode steps where the cap fired
+        (generations_df, step_metrics_df) — generations uses schema:
+            prompt_idx, prompt_text, baseline_text, correction_applied,
+            threshold_type, perturbed_text
     """
     generation_rows = []
     step_metric_rows = []
@@ -1285,22 +1284,15 @@ def run_capping_experiment(
                 )
 
                 # Generation-level row
+                corrected = n_interventions > 0
                 gen_row = {
-                    "version": version,
                     "prompt_idx": prompt_idx,
                     "prompt_text": prompt,
-                    "direction_type": axis_name,
-                    "alpha": alpha,
-                    "threshold_value": tau_repr,   # τ at last cap layer, for reference
-                    "cap_layers": cap_layers_str,
                     "baseline_text": bl_text,
-                    "perturbed_text": pt_text,
-                    "baseline_len_tokens": bl_ids.shape[1] - prompt_len,
-                    "perturbed_len_tokens": pt_ids.shape[1] - prompt_len,
-                    "n_capping_interventions": n_interventions,
+                    "correction_applied": "Yes" if corrected else "No",
+                    "threshold_type": alpha if corrected else "NA",
+                    "perturbed_text": pt_text if corrected else "NA",
                 }
-                if category is not None:
-                    gen_row["prompt_category"] = category
                 generation_rows.append(gen_row)
 
                 # Per-step metrics
@@ -1429,14 +1421,11 @@ def run_capability_eval(
 
     For each benign prompt and each (axis, alpha) condition, generates a capped
     response and records:
-      - n_interventions: how often the cap fires (ideally ~0 on benign prompts)
-      - jsd: mean Jensen-Shannon divergence vs uncapped baseline
-      - refused: whether the response contains a refusal phrase
-      - exact_match: whether capped output is identical to baseline
+      - correction_applied: whether the capping hook fired (Yes/No)
+      - threshold_type: which threshold was used (or NA if no correction)
+      - perturbed_text: the capped output (or NA if no correction)
 
-    A well-designed axis should have near-zero interventions on benign prompts.
-    High interventions here means the cap is non-selective — it fires on normal
-    behaviour too, degrading model capability.
+    A well-designed axis should rarely trigger corrections on benign prompts.
 
     Returns:
         DataFrame with one row per (prompt, axis, alpha).
@@ -1497,30 +1486,14 @@ def run_capability_eval(
 
                 pt_text = exp.tokenizer.decode(pt_ids[0, prompt_len:], skip_special_tokens=True)
 
-                # Mean JSD across decode steps
-                step_metrics = compute_step_metrics(
-                    bl_scores, pt_scores, bl_ids, pt_ids,
-                    exp.tokenizer, prompt_len,
-                )
-                mean_jsd = float(np.mean([s["jensen_shannon_divergence"] for s in step_metrics])) if step_metrics else None
-
+                corrected = n_interventions > 0
                 rows.append({
-                    "version":              version,
                     "prompt_idx":           prompt_idx,
                     "prompt_text":          prompt,
-                    "direction_type":       axis_name,
-                    "alpha":                alpha,
-                    "threshold_value":      tau_repr,
-                    "cap_layers":           cap_layers_str,
-                    "n_interventions":      n_interventions,
-                    "mean_jsd":             mean_jsd,
-                    "baseline_refused":     refusal_fn(bl_text),
-                    "capped_refused":       refusal_fn(pt_text),
-                    "exact_match":          bl_text.strip() == pt_text.strip(),
-                    "baseline_len_tokens":  bl_ids.shape[1] - prompt_len,
-                    "capped_len_tokens":    pt_ids.shape[1] - prompt_len,
                     "baseline_text":        bl_text,
-                    "capped_text":          pt_text,
+                    "correction_applied":   "Yes" if corrected else "No",
+                    "threshold_type":       alpha if corrected else "NA",
+                    "perturbed_text":       pt_text if corrected else "NA",
                 })
 
                 del pt_ids, pt_scores, pt_projs

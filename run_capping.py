@@ -719,18 +719,15 @@ def main():
 
     # Print summary
     print("\n  Capability eval summary (benign prompts):")
-    summary = cap_eval_df.groupby(["direction_type", "alpha"]).agg(
-        interventions=("n_interventions", "mean"),
-        mean_jsd=("mean_jsd", "mean"),
-        false_refusals=("capped_refused", "mean"),
-        exact_match=("exact_match", "mean"),
-    ).round(3)
+    summary = cap_eval_df.groupby("correction_applied").agg(
+        count=("prompt_idx", "count"),
+    )
     print(summary.to_string())
 
     # --- Save outputs ---
-    gen_df.to_csv(output_dir / "generations.csv", index=False)
+    gen_df.to_csv(output_dir / "assistant_axis_generations.csv", index=False)
     step_df.to_csv(output_dir / "per_step_metrics.csv", index=False)
-    cap_eval_df.to_csv(output_dir / "capability_eval.csv", index=False)
+    cap_eval_df.to_csv(output_dir / "assistant_axis_capability_eval.csv", index=False)
 
     # ============================================================
     # CROSS-AXIS EXPERIMENT
@@ -769,9 +766,10 @@ def main():
                                    ["mean_benign", "std_jailbreak"])
 
             cross_gen_rows = []
+            cross_cap_eval_rows = []
             cross_step_rows = []
 
-            # --- Jailbreak prompts ---
+            # --- Jailbreak prompts then benign prompts ---
             all_prompts = [("jailbreak", prompts, prompt_categories)]
             all_prompts.append(("benign", calibration_prompts, None))
 
@@ -831,26 +829,19 @@ def main():
                             pt_ids[0, prompt_len:], skip_special_tokens=True
                         )
 
-                        cross_gen_rows.append({
-                            "version": version,
+                        corrected = n_corrected > 0
+                        row = {
                             "prompt_idx": prompt_idx,
-                            "prompt_set": prompt_set_name,
                             "prompt_text": prompt_text,
-                            "direction_type": cross_label,
-                            "detect_axis": "assistant_capping",
-                            "correct_axis": correct_axis_name,
-                            "alpha": alpha_key,
-                            "threshold_detect": tau_detect_repr,
-                            "threshold_correct": tau_correct_repr,
-                            "cap_layers": cap_layers_str,
                             "baseline_text": bl_text,
-                            "perturbed_text": pt_text,
-                            "baseline_len_tokens": bl_ids.shape[1] - prompt_len,
-                            "perturbed_len_tokens": pt_ids.shape[1] - prompt_len,
-                            "n_triggered": n_triggered,
-                            "n_corrected": n_corrected,
-                            "prompt_category": category,
-                        })
+                            "correction_applied": "Yes" if corrected else "No",
+                            "threshold_type": alpha_key if corrected else "NA",
+                            "perturbed_text": pt_text if corrected else "NA",
+                        }
+                        if prompt_set_name == "jailbreak":
+                            cross_gen_rows.append(row)
+                        else:
+                            cross_cap_eval_rows.append(row)
 
                         step_metrics = compute_step_metrics(
                             bl_scores, pt_scores, bl_ids, pt_ids,
@@ -880,31 +871,32 @@ def main():
                     _torch.cuda.empty_cache()
 
             cross_gen_df = pd.DataFrame(cross_gen_rows)
+            cross_cap_eval_df = pd.DataFrame(cross_cap_eval_rows)
             cross_step_df = pd.DataFrame(cross_step_rows)
 
             cross_gen_df.to_csv(output_dir / "cross_axis_generations.csv", index=False)
+            cross_cap_eval_df.to_csv(output_dir / "cross_axis_capability_eval.csv", index=False)
             cross_step_df.to_csv(output_dir / "cross_axis_per_step_metrics.csv", index=False)
 
             print(f"\n  Cross-axis results:")
             print(f"    cross_axis_generations.csv       {len(cross_gen_df)} rows")
+            print(f"    cross_axis_capability_eval.csv   {len(cross_cap_eval_df)} rows")
             print(f"    cross_axis_per_step_metrics.csv  {len(cross_step_df)} rows")
 
             if len(cross_gen_df) > 0:
-                print("\n  Cross-axis summary (n_triggered vs n_corrected):")
-                summary = cross_gen_df.groupby(["prompt_set", "alpha"]).agg(
-                    mean_triggered=("n_triggered", "mean"),
-                    mean_corrected=("n_corrected", "mean"),
-                    n_prompts=("prompt_idx", "nunique"),
-                ).round(1)
+                print("\n  Cross-axis summary:")
+                summary = cross_gen_df.groupby("correction_applied").agg(
+                    count=("prompt_idx", "count"),
+                )
                 print(summary.to_string())
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed / 60:.1f} minutes.")
     print(f"Saved to {output_dir}/")
     print(f"  version.json")
-    print(f"  generations.csv         {len(gen_df)} rows")
-    print(f"  per_step_metrics.csv    {len(step_df)} rows")
-    print(f"  capability_eval.csv     {len(cap_eval_df)} rows")
+    print(f"  assistant_axis_generations.csv       {len(gen_df)} rows")
+    print(f"  per_step_metrics.csv                 {len(step_df)} rows")
+    print(f"  assistant_axis_capability_eval.csv   {len(cap_eval_df)} rows")
 
 
 if __name__ == "__main__":
