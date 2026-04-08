@@ -57,10 +57,12 @@ for i in "${!GPUS[@]}"; do
     echo "  GPU $GPU  slice $SLICE  → $DIR"
     if [ "$i" -eq 0 ]; then
         # Show first GPU's output live; also save to log via tee
+        HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1 \
         CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
             --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
             2>&1 | tee "$TMP/gpu${i}.log" &
     else
+        HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1 \
         TQDM_DISABLE=1 HF_HUB_DISABLE_PROGRESS_BARS=1 \
         CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
             --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
