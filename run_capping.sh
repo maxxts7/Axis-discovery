@@ -36,6 +36,10 @@ CHUNK=$(( N_TOTAL / N_GPUS ))
 TMP="_parallel_tmp"
 PIDS=()
 
+# Pre-download the axis file so GPU processes don't race
+echo "Pre-downloading axis vectors..."
+python -c "from capping_experiment import download_axis; download_axis('Qwen/Qwen3-32B')"
+
 echo "Splitting $N_TOTAL behaviors across $N_GPUS GPUs (chunk=$CHUNK)..."
 
 for i in "${!GPUS[@]}"; do
