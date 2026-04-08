@@ -1,0 +1,426 @@
+{
+  "version": "light_raw",
+  "preset": "light_raw",
+  "notes": "Raw axes only \u2014 skips orthogonalized compliance/PC1 variants. Run alongside light to compare raw vs orthogonalized.",
+  "timestamp": "2026-04-07T09:15:38.638954",
+  "model_name": "Qwen/Qwen3-32B",
+  "cap_layers": "L46-L53",
+  "threshold_method": "discriminative_midpoint",
+  "axis_names": [
+    "assistant_capping",
+    "pc1_raw",
+    "jbb_wj_raw",
+    "jbb_cal_raw",
+    "jbb_wj_pca_raw",
+    "jbb_cal_pca_raw"
+  ],
+  "thresholds": {
+    "assistant_capping": {
+      "L46": {
+        "optimal": 0.6846284866333008,
+        "mean_benign": 17.13399314880371,
+        "mean_jailbreak": -15.76473617553711,
+        "std_benign": 13.352404594421387,
+        "std_jailbreak": 18.784671783447266,
+        "separation": 32.89872932434082
+      },
+      "L47": {
+        "optimal": 0.991541862487793,
+        "mean_benign": 18.68990707397461,
+        "mean_jailbreak": -16.706823348999023,
+        "std_benign": 14.550415992736816,
+        "std_jailbreak": 20.099803924560547,
+        "separation": 35.39673042297363
+      },
+      "L48": {
+        "optimal": 0.6242771148681641,
+        "mean_benign": 21.640453338623047,
+        "mean_jailbreak": -20.39189910888672,
+        "std_benign": 16.26970100402832,
+        "std_jailbreak": 23.962181091308594,
+        "separation": 42.032352447509766
+      },
+      "L49": {
+        "optimal": -0.48858165740966797,
+        "mean_benign": 25.400903701782227,
+        "mean_jailbreak": -26.378067016601562,
+        "std_benign": 19.162403106689453,
+        "std_jailbreak": 30.227571487426758,
+        "separation": 51.77897071838379
+      },
+      "L50": {
+        "optimal": -0.6415061950683594,
+        "mean_benign": 31.116378784179688,
+        "mean_jailbreak": -32.399391174316406,
+        "std_benign": 22.819419860839844,
+        "std_jailbreak": 39.72544479370117,
+        "separation": 63.515769958496094
+      },
+      "L51": {
+        "optimal": 0.7344379425048828,
+        "mean_benign": 35.36947250366211,
+        "mean_jailbreak": -33.900596618652344,
+        "std_benign": 25.533090591430664,
+        "std_jailbreak": 45.09557342529297,
+        "separation": 69.27006912231445
+      },
+      "L52": {
+        "optimal": 1.1405162811279297,
+        "mean_benign": 37.942962646484375,
+        "mean_jailbreak": -35.661930084228516,
+        "std_benign": 27.619230270385742,
+        "std_jailbreak": 49.887939453125,
+        "separation": 73.60489273071289
+      },
+      "L53": {
+        "optimal": -0.42247581481933594,
+        "mean_benign": 47.4439582824707,
+        "mean_jailbreak": -48.288909912109375,
+        "std_benign": 34.245094299316406,
+        "std_jailbreak": 65.4600601196289,
+        "separation": 95.73286819458008
+      }
+    },
+    "pc1_raw": {
+      "L46": {
+        "optimal": 36.073116302490234,
+        "mean_benign": 34.31224822998047,
+        "mean_jailbreak": 37.833984375,
+        "std_benign": 12.634675979614258,
+        "std_jailbreak": 7.583755016326904,
+        "separation": -3.5217361450195312
+      },
+      "L47": {
+        "optimal": 38.43613815307617,
+        "mean_benign": 38.10982131958008,
+        "mean_jailbreak": 38.762454986572266,
+        "std_benign": 14.532442092895508,
+        "std_jailbreak": 8.350521087646484,
+        "separation": -0.6526336669921875
+      },
+      "L48": {
+        "optimal": 40.5531120300293,
+        "mean_benign": 38.42259979248047,
+        "mean_jailbreak": 42.683624267578125,
+        "std_benign": 17.308046340942383,
+        "std_jailbreak": 9.895076751708984,
+        "separation": -4.261024475097656
+      },
+      "L49": {
+        "optimal": 45.608642578125,
+        "mean_benign": 43.24452209472656,
+        "mean_jailbreak": 47.97276306152344,
+        "std_benign": 21.59644889831543,
+        "std_jailbreak": 12.031875610351562,
+        "separation": -4.728240966796875
+      },
+      "L50": {
+        "optimal": 49.94085502624512,
+        "mean_benign": 47.036739349365234,
+        "mean_jailbreak": 52.844970703125,
+        "std_benign": 25.433879852294922,
+        "std_jailbreak": 14.852967262268066,
+        "separation": -5.808231353759766
+      },
+      "L51": {
+        "optimal": 55.63284873962402,
+        "mean_benign": 52.12384796142578,
+        "mean_jailbreak": 59.141849517822266,
+        "std_benign": 30.77467155456543,
+        "std_jailbreak": 18.144163131713867,
+        "separation": -7.018001556396484
+      },
+      "L52": {
+        "optimal": 61.210636138916016,
+        "mean_benign": 56.86597442626953,
+        "mean_jailbreak": 65.5552978515625,
+        "std_benign": 36.261199951171875,
+        "std_jailbreak": 21.117408752441406,
+        "separation": -8.689323425292969
+      },
+      "L53": {
+        "optimal": 71.90252304077148,
+        "mean_benign": 67.80057525634766,
+        "mean_jailbreak": 76.00447082519531,
+        "std_benign": 45.121803283691406,
+        "std_jailbreak": 26.21892547607422,
+        "separation": -8.203895568847656
+      }
+    },
+    "jbb_wj_raw": {
+      "L46": {
+        "optimal": -55.71866226196289,
+        "mean_benign": -50.69075393676758,
+        "mean_jailbreak": -60.7465705871582,
+        "std_benign": 10.713476181030273,
+        "std_jailbreak": 14.141014099121094,
+        "separation": 10.055816650390625
+      },
+      "L47": {
+        "optimal": -60.6920166015625,
+        "mean_benign": -58.64629364013672,
+        "mean_jailbreak": -62.73773956298828,
+        "std_benign": 12.049881935119629,
+        "std_jailbreak": 15.85435676574707,
+        "separation": 4.0914459228515625
+      },
+      "L48": {
+        "optimal": -63.21644401550293,
+        "mean_benign": -57.03902816772461,
+        "mean_jailbreak": -69.39385986328125,
+        "std_benign": 13.589739799499512,
+        "std_jailbreak": 19.14791488647461,
+        "separation": 12.35483169555664
+      },
+      "L49": {
+        "optimal": -71.81251525878906,
+        "mean_benign": -64.43124389648438,
+        "mean_jailbreak": -79.19378662109375,
+        "std_benign": 16.386991500854492,
+        "std_jailbreak": 24.136194229125977,
+        "separation": 14.762542724609375
+      },
+      "L50": {
+        "optimal": -79.42361068725586,
+        "mean_benign": -69.50569152832031,
+        "mean_jailbreak": -89.3415298461914,
+        "std_benign": 18.68860626220703,
+        "std_jailbreak": 30.457923889160156,
+        "separation": 19.835838317871094
+      },
+      "L51": {
+        "optimal": -87.47029113769531,
+        "mean_benign": -77.2552261352539,
+        "mean_jailbreak": -97.68535614013672,
+        "std_benign": 22.665878295898438,
+        "std_jailbreak": 37.4692268371582,
+        "separation": 20.430130004882812
+      },
+      "L52": {
+        "optimal": -96.73925399780273,
+        "mean_benign": -84.75144958496094,
+        "mean_jailbreak": -108.72705841064453,
+        "std_benign": 26.951801300048828,
+        "std_jailbreak": 43.747413635253906,
+        "separation": 23.975608825683594
+      },
+      "L53": {
+        "optimal": -110.35746383666992,
+        "mean_benign": -96.7248764038086,
+        "mean_jailbreak": -123.99005126953125,
+        "std_benign": 32.32326126098633,
+        "std_jailbreak": 54.38382339477539,
+        "separation": 27.265174865722656
+      }
+    },
+    "jbb_cal_raw": {
+      "L46": {
+        "optimal": -34.749958992004395,
+        "mean_benign": -39.0925178527832,
+        "mean_jailbreak": -30.407400131225586,
+        "std_benign": 8.116289138793945,
+        "std_jailbreak": 11.534688949584961,
+        "separation": -8.685117721557617
+      },
+      "L47": {
+        "optimal": -37.94108486175537,
+        "mean_benign": -44.9579963684082,
+        "mean_jailbreak": -30.92417335510254,
+        "std_benign": 8.987427711486816,
+        "std_jailbreak": 13.132292747497559,
+        "separation": -14.033823013305664
+      },
+      "L48": {
+        "optimal": -39.06024169921875,
+        "mean_benign": -45.75741958618164,
+        "mean_jailbreak": -32.36306381225586,
+        "std_benign": 10.239851951599121,
+        "std_jailbreak": 15.738263130187988,
+        "separation": -13.394355773925781
+      },
+      "L49": {
+        "optimal": -44.32948112487793,
+        "mean_benign": -52.826541900634766,
+        "mean_jailbreak": -35.832420349121094,
+        "std_benign": 12.181374549865723,
+        "std_jailbreak": 19.721006393432617,
+        "separation": -16.994121551513672
+      },
+      "L50": {
+        "optimal": -49.02371406555176,
+        "mean_benign": -59.079917907714844,
+        "mean_jailbreak": -38.96751022338867,
+        "std_benign": 14.496846199035645,
+        "std_jailbreak": 24.667404174804688,
+        "separation": -20.112407684326172
+      },
+      "L51": {
+        "optimal": -53.65249443054199,
+        "mean_benign": -66.42857360839844,
+        "mean_jailbreak": -40.87641525268555,
+        "std_benign": 17.833986282348633,
+        "std_jailbreak": 30.83806610107422,
+        "separation": -25.55215835571289
+      },
+      "L52": {
+        "optimal": -59.000539779663086,
+        "mean_benign": -72.86041259765625,
+        "mean_jailbreak": -45.14066696166992,
+        "std_benign": 21.58082389831543,
+        "std_jailbreak": 36.24601745605469,
+        "separation": -27.719745635986328
+      },
+      "L53": {
+        "optimal": -66.15233612060547,
+        "mean_benign": -84.8453369140625,
+        "mean_jailbreak": -47.45933532714844,
+        "std_benign": 27.190397262573242,
+        "std_jailbreak": 44.45274353027344,
+        "separation": -37.38600158691406
+      }
+    },
+    "jbb_wj_pca_raw": {
+      "L46": {
+        "optimal": -56.73413276672363,
+        "mean_benign": -51.556602478027344,
+        "mean_jailbreak": -61.91166305541992,
+        "std_benign": 10.76402759552002,
+        "std_jailbreak": 14.98095417022705,
+        "separation": 10.355060577392578
+      },
+      "L47": {
+        "optimal": -61.66809272766113,
+        "mean_benign": -59.49979019165039,
+        "mean_jailbreak": -63.836395263671875,
+        "std_benign": 12.103378295898438,
+        "std_jailbreak": 16.7673397064209,
+        "separation": 4.336605072021484
+      },
+      "L48": {
+        "optimal": -64.22192764282227,
+        "mean_benign": -57.86577606201172,
+        "mean_jailbreak": -70.57807922363281,
+        "std_benign": 13.580974578857422,
+        "std_jailbreak": 20.314374923706055,
+        "separation": 12.712303161621094
+      },
+      "L49": {
+        "optimal": -72.77381896972656,
+        "mean_benign": -65.07135772705078,
+        "mean_jailbreak": -80.47628021240234,
+        "std_benign": 16.359853744506836,
+        "std_jailbreak": 25.641895294189453,
+        "separation": 15.404922485351562
+      },
+      "L50": {
+        "optimal": -80.42058563232422,
+        "mean_benign": -70.03411102294922,
+        "mean_jailbreak": -90.80706024169922,
+        "std_benign": 18.651517868041992,
+        "std_jailbreak": 32.4553337097168,
+        "separation": 20.77294921875
+      },
+      "L51": {
+        "optimal": -88.57599258422852,
+        "mean_benign": -77.84508514404297,
+        "mean_jailbreak": -99.30690002441406,
+        "std_benign": 22.6033992767334,
+        "std_jailbreak": 39.882591247558594,
+        "separation": 21.461814880371094
+      },
+      "L52": {
+        "optimal": -97.8873405456543,
+        "mean_benign": -85.29208374023438,
+        "mean_jailbreak": -110.48259735107422,
+        "std_benign": 26.947790145874023,
+        "std_jailbreak": 46.57311248779297,
+        "separation": 25.190513610839844
+      },
+      "L53": {
+        "optimal": -111.50836563110352,
+        "mean_benign": -96.96784973144531,
+        "mean_jailbreak": -126.04888153076172,
+        "std_benign": 32.321319580078125,
+        "std_jailbreak": 58.069427490234375,
+        "separation": 29.081031799316406
+      }
+    },
+    "jbb_cal_pca_raw": {
+      "L46": {
+        "optimal": -34.20751094818115,
+        "mean_benign": -38.617469787597656,
+        "mean_jailbreak": -29.79755210876465,
+        "std_benign": 8.115152359008789,
+        "std_jailbreak": 11.290350914001465,
+        "separation": -8.819917678833008
+      },
+      "L47": {
+        "optimal": -37.36964130401611,
+        "mean_benign": -44.441505432128906,
+        "mean_jailbreak": -30.29777717590332,
+        "std_benign": 8.992464065551758,
+        "std_jailbreak": 12.833873748779297,
+        "separation": -14.143728256225586
+      },
+      "L48": {
+        "optimal": -38.45518779754639,
+        "mean_benign": -45.236846923828125,
+        "mean_jailbreak": -31.67352867126465,
+        "std_benign": 10.308574676513672,
+        "std_jailbreak": 15.399574279785156,
+        "separation": -13.563318252563477
+      },
+      "L49": {
+        "optimal": -43.6837100982666,
+        "mean_benign": -52.285560607910156,
+        "mean_jailbreak": -35.08185958862305,
+        "std_benign": 12.335206985473633,
+        "std_jailbreak": 19.310070037841797,
+        "separation": -17.20370101928711
+      },
+      "L50": {
+        "optimal": -48.327415466308594,
+        "mean_benign": -58.519657135009766,
+        "mean_jailbreak": -38.13517379760742,
+        "std_benign": 14.708659172058105,
+        "std_jailbreak": 24.166746139526367,
+        "separation": -20.384483337402344
+      },
+      "L51": {
+        "optimal": -52.88371467590332,
+        "mean_benign": -65.80658721923828,
+        "mean_jailbreak": -39.96084213256836,
+        "std_benign": 18.130496978759766,
+        "std_jailbreak": 30.23564338684082,
+        "separation": -25.845745086669922
+      },
+      "L52": {
+        "optimal": -58.13833045959473,
+        "mean_benign": -72.14778137207031,
+        "mean_jailbreak": -44.12887954711914,
+        "std_benign": 21.978759765625,
+        "std_jailbreak": 35.56829071044922,
+        "separation": -28.018901824951172
+      },
+      "L53": {
+        "optimal": -65.1054458618164,
+        "mean_benign": -83.96915435791016,
+        "mean_jailbreak": -46.241737365722656,
+        "std_benign": 27.716474533081055,
+        "std_jailbreak": 43.664276123046875,
+        "separation": -37.7274169921875
+      }
+    }
+  },
+  "n_prompts": 20,
+  "dataset": "allenai/wildjailbreak (eval, adversarial_harmful)",
+  "n_calibration": 20,
+  "n_jailbreak_train": 20,
+  "max_new_tokens": 128,
+  "temperature": 1.0,
+  "do_sample": false,
+  "seed": 42,
+  "deterministic": true,
+  "num_layers": 64,
+  "hidden_dim": 5120
+}

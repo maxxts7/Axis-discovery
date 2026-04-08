@@ -26,13 +26,408 @@ import pandas as pd
 from tqdm import tqdm
 from contextlib import ExitStack
 from typing import Optional
+from huggingface_hub import hf_hub_download
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from generation_experiment import (
-    SteeringExperiment,
-    _AxisProjectionTracker,
-    compute_step_metrics,
-    MODEL_CONFIGS,
-)
+
+# ---------------------------------------------------------------------------
+# Model & axis configuration
+# ---------------------------------------------------------------------------
+
+MODEL_CONFIGS = {
+    "google/gemma-2-27b-it": {
+        "hf_axis_file": "gemma-2-27b/assistant_axis.pt",
+        "target_layer": 22,
+        "num_layers": 46,
+    },
+    "Qwen/Qwen3-32B": {
+        "hf_axis_file": "qwen-3-32b/assistant_axis.pt",
+        "target_layer": 32,
+        "num_layers": 64,
+    },
+    "meta-llama/Llama-3.3-70B-Instruct": {
+        "hf_axis_file": "llama-3.3-70b/assistant_axis.pt",
+        "target_layer": 40,
+        "num_layers": 80,
+    },
+}
+
+HF_AXIS_REPO = "lu-christina/assistant-axis-vectors"
+
+
+def load_axis(path: str) -> torch.Tensor:
+    """Load a pre-computed assistant axis from a .pt file.
+
+    Handles both formats: dict with 'axis' key, or raw tensor.
+    Returns tensor of shape (num_layers, hidden_dim).
+    """
+    data = torch.load(path, map_location="cpu", weights_only=False)
+    if isinstance(data, dict):
+        if "axis" in data:
+            return data["axis"]
+        raise ValueError("Expected 'axis' key in saved dict")
+    return data
+
+
+def download_axis(model_name: str, cache_dir: str = "results") -> str:
+    """Download pre-computed assistant axis from HuggingFace."""
+    cfg = MODEL_CONFIGS[model_name]
+    return hf_hub_download(
+        repo_id=HF_AXIS_REPO,
+        filename=cfg["hf_axis_file"],
+        repo_type="dataset",
+        local_dir=cache_dir,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer discovery
+# ---------------------------------------------------------------------------
+
+_LAYER_PATHS = [
+    lambda m: m.model.layers,            # Llama, Gemma 2, Qwen, Mistral
+    lambda m: m.language_model.layers,    # Gemma 3, LLaVA (vision-language)
+    lambda m: m.transformer.h,            # GPT-2/Neo, Bloom
+    lambda m: m.transformer.layers,       # Some transformer variants
+    lambda m: m.gpt_neox.layers,          # GPT-NeoX
+]
+
+
+def _get_layers(model: nn.Module) -> nn.ModuleList:
+    """Find the transformer layer list for any supported architecture."""
+    for path_fn in _LAYER_PATHS:
+        try:
+            layers = path_fn(model)
+            if layers is not None and hasattr(layers, "__len__") and len(layers) > 0:
+                return layers
+        except AttributeError:
+            continue
+    raise AttributeError(
+        f"Could not find transformer layers for {type(model).__name__}. "
+        f"Supported architectures: Llama, Gemma, Qwen, GPT-2/Neo, GPT-NeoX."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Experiment class
+# ---------------------------------------------------------------------------
+
+class SteeringExperiment:
+    """Loads a transformer model and assistant axis for steering experiments."""
+
+    def __init__(
+        self,
+        model_name: str,
+        axis_path: Optional[str] = None,
+        device: Optional[str] = None,
+        dtype: torch.dtype = torch.bfloat16,
+        deterministic: bool = False,
+    ):
+        if deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+        self.model_name = model_name
+        self._deterministic = deterministic
+
+        logger.info("Loading model %s (dtype=%s, device_map=auto)...", model_name, dtype)
+        t0 = time.time()
+        model_kwargs = dict(dtype=dtype, device_map="auto", attn_implementation="flash_attention_2")
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        self.model.eval()
+        logger.info("Model loaded in %.1fs", time.time() - t0)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.layers = _get_layers(self.model)
+        self.num_layers = len(self.layers)
+        logger.info("Layers: %d, device_map: %s",
+                     self.num_layers,
+                     dict(self.model.hf_device_map) if hasattr(self.model, "hf_device_map") else "single")
+
+        if axis_path is None:
+            axis_path = download_axis(model_name)
+        self.axis = load_axis(axis_path)  # (num_layers, hidden_dim)
+        self.hidden_dim = self.axis.shape[-1]
+        logger.info("Axis loaded: shape=%s, hidden_dim=%d", self.axis.shape, self.hidden_dim)
+
+    def _model_device(self) -> torch.device:
+        if hasattr(self.model, "hf_device_map"):
+            first_device = next(iter(self.model.hf_device_map.values()))
+            return torch.device(f"cuda:{first_device}" if isinstance(first_device, int) else first_device)
+        return next(self.model.parameters()).device
+
+    def get_baseline_trajectory(
+        self, input_ids: torch.Tensor
+    ) -> tuple[dict[int, torch.Tensor], torch.Tensor]:
+        """Run unperturbed forward pass and cache residual stream at all layers."""
+        activations = {}
+        handles = []
+        for layer_idx in range(self.num_layers):
+            def make_hook(idx):
+                def hook_fn(module, input, output):
+                    act = output[0] if isinstance(output, tuple) else output
+                    activations[idx] = act[0, -1, :].detach().clone().cpu().float()
+                return hook_fn
+            handles.append(self.layers[layer_idx].register_forward_hook(make_hook(layer_idx)))
+        with torch.inference_mode():
+            outputs = self.model(input_ids)
+        for h in handles:
+            h.remove()
+        logits = outputs.logits[0, -1, :].detach().clone().cpu().float()
+        return activations, logits
+
+    def tokenize(self, prompt: str) -> torch.Tensor:
+        """Tokenize a prompt with chat template applied, return input_ids on device."""
+        conversation = [{"role": "user", "content": prompt}]
+        chat_kwargs = {}
+        if "qwen" in self.model_name.lower():
+            chat_kwargs["enable_thinking"] = False
+        text = self.tokenizer.apply_chat_template(
+            conversation, tokenize=False, add_generation_prompt=True, **chat_kwargs
+        )
+        if "qwen" in self.model_name.lower():
+            text += "<think>\n</think>\n\n"
+        tokens = self.tokenizer(text, return_tensors="pt")
+        return tokens["input_ids"].to(self._model_device())
+
+
+# ---------------------------------------------------------------------------
+# Projection tracker
+# ---------------------------------------------------------------------------
+
+class _AxisProjectionTracker:
+    """Read-only hook that records the dot product of the last-token hidden state
+    with a given axis vector at each forward pass during generation."""
+
+    def __init__(self, layer_module: nn.Module, axis_vector: torch.Tensor):
+        self._layer = layer_module
+        self._axis = axis_vector.float()
+        self._axis_device = None
+        self._projections: list = []
+        self._handle = None
+
+    def __enter__(self):
+        def hook_fn(module, input, output):
+            act = output[0] if isinstance(output, tuple) else output
+            h = act[0, -1, :].detach().float()
+            if self._axis_device is None:
+                self._axis_device = self._axis.to(h.device)
+            self._projections.append(h @ self._axis_device)
+
+        self._handle = self._layer.register_forward_hook(hook_fn)
+        return self
+
+    def __exit__(self, *exc):
+        if self._handle is not None:
+            self._handle.remove()
+            self._handle = None
+
+    @property
+    def projections(self) -> list[float]:
+        if not self._projections:
+            return []
+        return torch.stack(self._projections).cpu().tolist()
+
+
+# ---------------------------------------------------------------------------
+# Per-step metrics
+# ---------------------------------------------------------------------------
+
+def compute_step_metrics(
+    baseline_scores: tuple[torch.Tensor, ...],
+    perturbed_scores: tuple[torch.Tensor, ...],
+    baseline_ids: torch.Tensor,
+    perturbed_ids: torch.Tensor,
+    tokenizer,
+    prompt_len: int,
+) -> list[dict]:
+    """Compute distributional comparison metrics at each generation step."""
+    n_steps = min(len(baseline_scores), len(perturbed_scores))
+    if n_steps == 0:
+        return []
+
+    bl_token_ids = baseline_ids[0, prompt_len:prompt_len + n_steps].cpu().tolist()
+    pt_token_ids = perturbed_ids[0, prompt_len:prompt_len + n_steps].cpu().tolist()
+    bl_token_strs = [tokenizer.decode([i]) for i in bl_token_ids]
+    pt_token_strs = [tokenizer.decode([i]) for i in pt_token_ids]
+
+    kl_vals, jsd_vals = [], []
+    bl_ent_vals, pt_ent_vals = [], []
+    rank_vals, logit_cos_vals = [], []
+    bl_top5_tensors, pt_top5_tensors = [], []
+
+    for t in range(n_steps):
+        bl_logits = baseline_scores[t][0].float()
+        pt_logits = perturbed_scores[t][0].float()
+
+        bl_log_probs = F.log_softmax(bl_logits, dim=-1)
+        bl_probs = bl_log_probs.exp()
+        pt_log_probs = F.log_softmax(pt_logits, dim=-1)
+        pt_probs = pt_log_probs.exp()
+
+        kl_vals.append(F.kl_div(pt_log_probs, bl_probs, reduction="sum"))
+
+        m = 0.5 * (bl_probs + pt_probs)
+        log_m = torch.log(m + 1e-10)
+        jsd_vals.append(0.5 * F.kl_div(log_m, bl_probs, reduction="sum")
+                        + 0.5 * F.kl_div(log_m, pt_probs, reduction="sum"))
+
+        bl_ent_vals.append(-(bl_probs * bl_log_probs).sum())
+        pt_ent_vals.append(-(pt_probs * pt_log_probs).sum())
+
+        bl_top1 = bl_logits.argmax()
+        rank_vals.append((pt_logits >= pt_logits[bl_top1]).sum() - 1)
+
+        bl_top5_tensors.append(bl_logits.topk(5).indices)
+        pt_top5_tensors.append(pt_logits.topk(5).indices)
+
+        logit_cos_vals.append(F.cosine_similarity(
+            bl_logits.unsqueeze(0), pt_logits.unsqueeze(0)
+        ))
+
+    kl_cpu        = torch.stack(kl_vals).cpu().tolist()
+    jsd_cpu       = torch.stack(jsd_vals).cpu().tolist()
+    bl_ent_cpu    = torch.stack(bl_ent_vals).cpu().tolist()
+    pt_ent_cpu    = torch.stack(pt_ent_vals).cpu().tolist()
+    rank_cpu      = torch.stack(rank_vals).cpu().tolist()
+    logit_cos_cpu = torch.cat(logit_cos_vals).cpu().tolist()
+
+    bl_top5_all = torch.stack(bl_top5_tensors).cpu().tolist()
+    pt_top5_all = torch.stack(pt_top5_tensors).cpu().tolist()
+    jaccard_vals = [
+        len(set(b) & set(p)) / len(set(b) | set(p))
+        for b, p in zip(bl_top5_all, pt_top5_all)
+    ]
+
+    records = []
+    for t in range(n_steps):
+        records.append({
+            "step": t,
+            "kl_divergence": kl_cpu[t],
+            "jensen_shannon_divergence": jsd_cpu[t],
+            "baseline_entropy": bl_ent_cpu[t],
+            "perturbed_entropy": pt_ent_cpu[t],
+            "token_match": bl_token_ids[t] == pt_token_ids[t],
+            "baseline_token": bl_token_strs[t],
+            "perturbed_token": pt_token_strs[t],
+            "baseline_token_rank_in_perturbed": rank_cpu[t],
+            "top5_jaccard": jaccard_vals[t],
+            "logit_cosine_similarity": logit_cos_cpu[t],
+        })
+
+    return records
+
+
+# ---------------------------------------------------------------------------
+# Direction computation
+# ---------------------------------------------------------------------------
+
+def compute_directions(
+    exp: SteeringExperiment,
+    target_layer: int,
+    n_random_dirs: int = 5,
+    seed: int = 42,
+    factual_prompts: Optional[list[str]] = None,
+    creative_prompts: Optional[list[str]] = None,
+    pca_prompts: Optional[list[str]] = None,
+    enable_assistant: bool = True,
+    enable_random: bool = True,
+    enable_fc: bool = True,
+    enable_pca: bool = True,
+) -> dict[str, torch.Tensor]:
+    """Compute perturbation direction vectors at a given layer.
+
+    Returns dict mapping direction names to unit vectors (float32, CPU).
+    FC and PCA directions are orthogonalized against the assistant axis.
+    """
+    directions: dict[str, torch.Tensor] = {}
+    axis_dir = None
+
+    if enable_assistant or enable_fc or enable_pca:
+        axis_dir = exp.axis[target_layer].float()
+        axis_dir = axis_dir / (axis_dir.norm() + 1e-12)
+
+    if enable_assistant:
+        directions["assistant_away"] = -axis_dir
+        directions["assistant_toward"] = axis_dir
+        print(f"  Assistant axis: norm={exp.axis[target_layer].norm().item():.2f}")
+
+    if enable_random:
+        rng = torch.Generator().manual_seed(seed)
+        for i in range(n_random_dirs):
+            v = torch.randn(exp.hidden_dim, generator=rng)
+            v = v / v.norm()
+            directions[f"random_{i}"] = v
+        print(f"  Random: {n_random_dirs} directions (seed={seed})")
+
+    fc_dir = None
+    if enable_fc:
+        if not factual_prompts or not creative_prompts:
+            raise ValueError("factual_prompts and creative_prompts are required when enable_fc=True")
+        print(f"  Computing FC contrast from {len(factual_prompts)}+{len(creative_prompts)} prompts...")
+        factual_acts = []
+        for p in tqdm(factual_prompts, desc="  Factual", leave=False):
+            ids = exp.tokenize(p)
+            acts, _ = exp.get_baseline_trajectory(ids)
+            factual_acts.append(acts[target_layer])
+        creative_acts = []
+        for p in tqdm(creative_prompts, desc="  Creative", leave=False):
+            ids = exp.tokenize(p)
+            acts, _ = exp.get_baseline_trajectory(ids)
+            creative_acts.append(acts[target_layer])
+        factual_mean = torch.stack(factual_acts).mean(dim=0).float()
+        creative_mean = torch.stack(creative_acts).mean(dim=0).float()
+        fc_dir = factual_mean - creative_mean
+        raw_norm = fc_dir.norm().item()
+        fc_dir = fc_dir / fc_dir.norm()
+        cos_before = (fc_dir @ axis_dir).item()
+        fc_dir = fc_dir - (fc_dir @ axis_dir) * axis_dir
+        if fc_dir.norm().item() < 1e-6:
+            print("  WARNING: FC direction collapsed after orthogonalization, skipping")
+            fc_dir = None
+        else:
+            fc_dir = fc_dir / fc_dir.norm()
+            cos_after = (fc_dir @ axis_dir).item()
+            print(f"  FC contrast: raw_norm={raw_norm:.2f}, "
+                  f"cos(axis) before={cos_before:.4f}, after={cos_after:.6f}")
+            directions["fc_positive"] = fc_dir
+            directions["fc_negative"] = -fc_dir
+
+    if enable_pca:
+        if not pca_prompts:
+            raise ValueError("pca_prompts is required when enable_pca=True")
+        print(f"  Computing PCA from {len(pca_prompts)} prompts...")
+        pca_acts = []
+        for p in tqdm(pca_prompts, desc="  PCA", leave=False):
+            ids = exp.tokenize(p)
+            acts, _ = exp.get_baseline_trajectory(ids)
+            pca_acts.append(acts[target_layer])
+        act_matrix = torch.stack(pca_acts).float()
+        act_centered = act_matrix - act_matrix.mean(dim=0)
+        U, S, Vt = torch.linalg.svd(act_centered, full_matrices=False)
+        pc1_dir = Vt[0]
+        total_var = (S ** 2).sum().item()
+        pc1_var = (S[0] ** 2).item() / total_var * 100
+        cos_axis_before = (pc1_dir @ axis_dir).item()
+        pc1_dir = pc1_dir - (pc1_dir @ axis_dir) * axis_dir
+        if pc1_dir.norm().item() < 1e-6:
+            print("  WARNING: PC1 direction collapsed after orthogonalization, skipping")
+        else:
+            pc1_dir = pc1_dir / pc1_dir.norm()
+            cos_axis_after = (pc1_dir @ axis_dir).item()
+            cos_fc = (pc1_dir @ fc_dir).item() if fc_dir is not None else None
+            print(f"  PCA PC1: var_explained={pc1_var:.1f}%, "
+                  f"cos(axis) before={cos_axis_before:.4f}, after={cos_axis_after:.6f}")
+            if cos_fc is not None:
+                print(f"           cos(FC)={cos_fc:.4f} (not orthogonalized, for reference)")
+            directions["pca_pc1_positive"] = pc1_dir
+            directions["pca_pc1_negative"] = -pc1_dir
+
+    print(f"  Total directions: {len(directions)}")
+    return directions
 
 logger = logging.getLogger("capping")
 if not logger.handlers:
@@ -606,7 +1001,9 @@ def run_capping_experiment(
     track_layers = sorted({cap_layers[-1], final_layer})
     cap_layers_str = f"L{cap_layers[0]}-L{cap_layers[-1]}"
 
-    n_conditions = sum(len(alpha_map) for alpha_map in thresholds.values())
+    _first_axis = next(iter(thresholds))
+    _alphas = list(next(iter(thresholds[_first_axis].values())).keys())
+    n_conditions = len(thresholds) * len(_alphas)
     total = len(prompts) * n_conditions
     logger.info(
         "Conditions per prompt: %d  |  Total generations: %d prompts × %d = %d",

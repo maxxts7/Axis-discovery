@@ -168,10 +168,108 @@ CALIBRATION_PROMPTS = [
 
 # ============================================================
 # DIRECTION COMPUTATION PROMPTS (for PCA PC1)
-# Reused from run_generation.py — same set used in the perturbation experiment.
 # ============================================================
 
-from run_generation import FACTUAL_PROMPTS, CREATIVE_PROMPTS, PCA_PROMPTS
+FACTUAL_PROMPTS = [
+    "What is the boiling point of water?",
+    "How many bones are in the human body?",
+    "What is the chemical formula for table salt?",
+    "When did World War II end?",
+    "What is the speed of sound in air?",
+    "How far is the moon from Earth?",
+    "What is the atomic number of carbon?",
+    "Who invented the telephone?",
+    "What is the largest planet in our solar system?",
+    "How many chromosomes do humans have?",
+    "What is the freezing point of mercury?",
+    "What year was the internet invented?",
+    "How long does light take to reach Earth from the Sun?",
+    "What is the population of Tokyo?",
+    "What is the pH of pure water?",
+]
+
+CREATIVE_PROMPTS = [
+    "Write a poem about a dying star.",
+    "Describe a color that doesn't exist.",
+    "Write the opening of a novel set in a dream.",
+    "Invent a new mythological creature and describe it.",
+    "Write a love letter from the ocean to the moon.",
+    "Describe what silence sounds like.",
+    "Write a short story about a clock that runs backwards.",
+    "Imagine a conversation between fire and ice.",
+    "Describe the taste of a memory.",
+    "Write a monologue from the perspective of a black hole.",
+    "Create a recipe for happiness.",
+    "Write a eulogy for the last tree on Earth.",
+    "Describe a sunset to someone who has never seen light.",
+    "Write a fairy tale set in a quantum computer.",
+    "Invent a new emotion and describe how it feels.",
+]
+
+PCA_PROMPTS = [
+    # -- Original 30 --
+    "How do I reset my wifi router?",
+    "What did Einstein think about quantum mechanics?",
+    "Plan a 3-day trip to Barcelona.",
+    "My dog keeps barking at night, what should I do?",
+    "Explain the difference between HTTP and HTTPS.",
+    "What is the best way to learn piano as an adult?",
+    "How does a refrigerator work?",
+    "Write a cover letter for a data analyst position.",
+    "What causes thunder?",
+    "How do you make sourdough bread from scratch?",
+    "What are the main arguments for and against nuclear energy?",
+    "Help me understand recursive functions.",
+    "What is the history of the Olympic Games?",
+    "How do vaccines work?",
+    "What is the difference between a crocodile and an alligator?",
+    "Explain inflation to a teenager.",
+    "How do I remove a red wine stain from carpet?",
+    "What are the health benefits of meditation?",
+    "Describe how GPS works.",
+    "What should I know before adopting a cat?",
+    "How does a microwave oven heat food?",
+    "What is the significance of the Rosetta Stone?",
+    "Explain how compound interest works.",
+    "What are the symptoms of burnout?",
+    "How do noise-cancelling headphones work?",
+    "What is the plot of Pride and Prejudice?",
+    "How do I negotiate a better deal on a car?",
+    "What causes ocean tides?",
+    "Explain the basics of machine learning.",
+    "What is the best way to organize a small kitchen?",
+    # -- Additional 30 (diverse domains and interaction styles) --
+    "Summarize the causes of the French Revolution.",
+    "What is the difference between a virus and a bacterium?",
+    "How do I fix a leaky faucet?",
+    "Write a brief product description for a standing desk.",
+    "What are the pros and cons of remote work?",
+    "Explain photosynthesis in simple terms.",
+    "How should I prepare for a job interview?",
+    "What is the difference between classical and operant conditioning?",
+    "Translate this sentence into formal language: gonna grab some food brb.",
+    "Why do airplanes fly?",
+    "Compare Python and JavaScript for a beginner.",
+    "What are some strategies for managing anxiety?",
+    "How does blockchain technology work?",
+    "What should I look for when buying a used car?",
+    "Explain the water cycle to a 10-year-old.",
+    "What are the key differences between stocks and bonds?",
+    "How do I train for a half marathon?",
+    "What is CRISPR and why does it matter?",
+    "Give me a weekly meal plan for a vegetarian diet.",
+    "What were the main outcomes of the Treaty of Versailles?",
+    "How do electric vehicles compare to gasoline cars?",
+    "What is the difference between weather and climate?",
+    "Help me write a polite email declining a meeting invitation.",
+    "What causes earthquakes?",
+    "Explain the basics of supply and demand.",
+    "How do I improve my credit score?",
+    "What is the role of the mitochondria in a cell?",
+    "Suggest a beginner weightlifting routine.",
+    "What is the difference between empathy and sympathy?",
+    "How does a search engine rank web pages?",
+]
 
 
 # ============================================================
@@ -320,8 +418,8 @@ def main():
 
     t_start = time.time()
 
-    from generation_experiment import SteeringExperiment, compute_directions, MODEL_CONFIGS
     from capping_experiment import (
+        SteeringExperiment, compute_directions, MODEL_CONFIGS,
         compute_thresholds, compute_discriminative_thresholds,
         run_capping_experiment, compute_compliance_axis,
         compute_pca_compliance_axis, run_capability_eval,

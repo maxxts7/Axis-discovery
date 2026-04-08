@@ -1,0 +1,51 @@
+{
+  "version": "cal_inv",
+  "preset": "cal_inv",
+  "notes": "Polarity-inverted jbb_cal axis only. Tests whether negating jbb_cal_raw (so jailbreaks land below the threshold) improves selectivity and refusal rate over the original broken-polarity axis.",
+  "timestamp": "2026-04-07T13:35:34.474355",
+  "model_name": "Qwen/Qwen3-32B",
+  "cap_layers": "L46-L53",
+  "threshold_method": "discriminative_midpoint",
+  "axis_names": [
+    "jbb_cal_raw_inv"
+  ],
+  "thresholds": {
+    "jbb_cal_raw_inv": {
+      "L46": {
+        "optimal": 34.749958992004395
+      },
+      "L47": {
+        "optimal": 37.94108486175537
+      },
+      "L48": {
+        "optimal": 39.06024169921875
+      },
+      "L49": {
+        "optimal": 44.32948112487793
+      },
+      "L50": {
+        "optimal": 49.02371406555176
+      },
+      "L51": {
+        "optimal": 53.65249443054199
+      },
+      "L52": {
+        "optimal": 59.000539779663086
+      },
+      "L53": {
+        "optimal": 66.15233612060547
+      }
+    }
+  },
+  "n_prompts": 20,
+  "dataset": "allenai/wildjailbreak (eval, adversarial_harmful)",
+  "n_calibration": 20,
+  "n_jailbreak_train": 20,
+  "max_new_tokens": 128,
+  "temperature": 1.0,
+  "do_sample": false,
+  "seed": 42,
+  "deterministic": true,
+  "num_layers": 64,
+  "hidden_dim": 5120
+}
