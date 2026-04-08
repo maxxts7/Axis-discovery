@@ -72,6 +72,8 @@ for i in "${!GPUS[@]}"; do
 done
 
 # Wait for all shards with progress monitoring
+# Disable set -e: kill/wait/grep can return non-zero legitimately
+set +e
 FAILED=0
 DONE=()
 for i in "${!GPUS[@]}"; do DONE[$i]=0; done
@@ -125,6 +127,7 @@ while true; do
     sleep 5
 done
 echo ""
+set -e
 
 [ "$FAILED" -eq 1 ] && exit 1
 
