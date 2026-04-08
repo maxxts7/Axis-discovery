@@ -64,7 +64,8 @@ for i in "${!GPUS[@]}"; do
     mkdir -p "$DIR"
 
     echo "  GPU $GPU  slice $SLICE  → $DIR"
-    CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
+    CUDA_VISIBLE_DEVICES="$GPU" TQDM_DISABLE=1 HF_HUB_DISABLE_PROGRESS_BARS=1 \
+        python run_capping.py \
         --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
         > "$TMP/gpu${i}.log" 2>&1 &
     PIDS+=($!)
