@@ -1189,7 +1189,7 @@ def run_capping_experiment(
     Returns:
         (generations_df, step_metrics_df) — generations uses schema:
             prompt_idx, prompt_text, baseline_text, correction_applied,
-            threshold_type, perturbed_text
+            perturbed_text
     """
     generation_rows = []
     step_metric_rows = []
@@ -1290,7 +1290,6 @@ def run_capping_experiment(
                     "prompt_text": prompt,
                     "baseline_text": bl_text,
                     "correction_applied": "Yes" if corrected else "No",
-                    "threshold_type": alpha if corrected else "NA",
                     "perturbed_text": pt_text if corrected else "NA",
                 }
                 generation_rows.append(gen_row)
@@ -1422,7 +1421,6 @@ def run_capability_eval(
     For each benign prompt and each (axis, alpha) condition, generates a capped
     response and records:
       - correction_applied: whether the capping hook fired (Yes/No)
-      - threshold_type: which threshold was used (or NA if no correction)
       - perturbed_text: the capped output (or NA if no correction)
 
     A well-designed axis should rarely trigger corrections on benign prompts.
@@ -1492,7 +1490,6 @@ def run_capability_eval(
                     "prompt_text":          prompt,
                     "baseline_text":        bl_text,
                     "correction_applied":   "Yes" if corrected else "No",
-                    "threshold_type":       alpha if corrected else "NA",
                     "perturbed_text":       pt_text if corrected else "NA",
                 })
 

@@ -114,10 +114,8 @@ PRESETS = {
     "cross_axis": dict(
         VERSION="cross_axis",
         VERSION_NOTES="Cross-axis capping: detect with assistant axis (optimal threshold), "
-                      "correct with jbb_wj_pca_raw axis at mean_benign (moderate) and "
-                      "std_jailbreak (aggressive) correction thresholds.",
+                      "correct with jbb_wj_pca_raw axis at std_jailbreak threshold.",
         N_PROMPTS=20,
-        ALPHAS=[0.1, 0.25, 0.5],
         MAX_NEW_TOKENS=128,
         OUTPUT_DIR="results/capping_cross_axis",
         N_CALIBRATION=20,
@@ -125,17 +123,15 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
-        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
+        CROSS_CORRECT_THRESHOLDS=["std_jailbreak"],
         AXES=["assistant_capping"],
-        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
+        THRESHOLD_TYPES=["optimal"],
     ),
     "cross_sanity": dict(
         VERSION="cross_sanity",
         VERSION_NOTES="Cross-axis sanity check — 5 prompts. Detect with assistant axis "
-                      "(optimal threshold), correct with jbb_wj_pca_raw at mean_benign "
-                      "and std_jailbreak correction thresholds.",
+                      "(optimal threshold), correct with jbb_wj_pca_raw at std_jailbreak.",
         N_PROMPTS=5,
-        ALPHAS=[0.25],
         MAX_NEW_TOKENS=64,
         OUTPUT_DIR="results/capping_cross_sanity",
         N_CALIBRATION=10,
@@ -143,17 +139,16 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
-        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
+        CROSS_CORRECT_THRESHOLDS=["std_jailbreak"],
         AXES=["assistant_capping"],
-        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
+        THRESHOLD_TYPES=["optimal"],
     ),
     "cross_full": dict(
         VERSION="cross_full",
         VERSION_NOTES="Cross-axis full run — 100 jailbreak prompts. "
                       "Detect with assistant axis (optimal threshold), correct with "
-                      "jbb_wj_pca_raw at mean_benign and std_jailbreak thresholds.",
+                      "jbb_wj_pca_raw at std_jailbreak threshold.",
         N_PROMPTS=100,
-        ALPHAS=[0.1, 0.25, 0.5, 0.75],
         MAX_NEW_TOKENS=256,
         OUTPUT_DIR="results/capping_cross_full",
         N_CALIBRATION=30,
@@ -161,9 +156,9 @@ PRESETS = {
         SKIP_ORTHOGONALIZED=True,
         CROSS_AXIS=True,
         CROSS_CORRECT_AXIS="jbb_wj_pca_raw",
-        CROSS_CORRECT_THRESHOLDS=["mean_benign", "std_jailbreak"],
+        CROSS_CORRECT_THRESHOLDS=["std_jailbreak"],
         AXES=["assistant_capping"],
-        THRESHOLD_TYPES=["optimal", "mean_benign", "std_jailbreak"],
+        THRESHOLD_TYPES=["optimal"],
     ),
 }
 
@@ -759,8 +754,7 @@ def main():
             cap_layers_str = f"L{cap_layers[0]}-L{cap_layers[-1]}"
 
             # Detection always uses "optimal" (discriminative midpoint — best selectivity).
-            # Correction iterates over CROSS_CORRECT_THRESHOLDS (e.g. mean_benign, std_jailbreak)
-            # which are more aggressive thresholds that push projections into refusal territory.
+            # Correction uses CROSS_CORRECT_THRESHOLDS (std_jailbreak by default).
             detect_key = "optimal"
             correct_keys = cfg.get("CROSS_CORRECT_THRESHOLDS",
                                    ["mean_benign", "std_jailbreak"])
@@ -835,7 +829,6 @@ def main():
                             "prompt_text": prompt_text,
                             "baseline_text": bl_text,
                             "correction_applied": "Yes" if corrected else "No",
-                            "threshold_type": alpha_key if corrected else "NA",
                             "perturbed_text": pt_text if corrected else "NA",
                         }
                         if prompt_set_name == "jailbreak":

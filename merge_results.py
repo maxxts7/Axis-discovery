@@ -8,16 +8,20 @@ import pandas as pd
 
 OUTPUT_DIRS = {
     # generation experiment
-    "sanity":           "results/generation_sanity",
-    "thorough":         "results/generation_thorough",
-    "full":             "results/generation",
-    "focused":          "results/generation_focused",
+    "sanity":               "results/generation_sanity",
+    "thorough":             "results/generation_thorough",
+    "full":                 "results/generation",
+    "focused":              "results/generation_focused",
     # capping experiment
-    "cap_sanity":       "results/capping_sanity",
-    "cap_light":        "results/capping_light",
-    "cap_full":         "results/capping_full",
-    "cap_paper":        "results/capping_paper",
-    "cap_light_raw":    "results/capping_light_raw",
+    "cap_sanity":           "results/capping_sanity",
+    "cap_light":            "results/capping_light",
+    "cap_full":             "results/capping_full",
+    "cap_paper":            "results/capping_paper",
+    "cap_light_raw":        "results/capping_light_raw",
+    # cross-axis capping
+    "cap_cross_sanity":     "results/capping_cross_sanity",
+    "cap_cross_axis":       "results/capping_cross_axis",
+    "cap_cross_full":       "results/capping_cross_full",
 }
 
 # Columns present in all experiments; missing ones are skipped gracefully

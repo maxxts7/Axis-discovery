@@ -287,7 +287,9 @@ def find_csvs(input_dir: Path) -> list[Path]:
     ]
     found = []
     for pat in patterns:
-        found.extend(sorted(input_dir.glob(pat)))
+        for p in sorted(input_dir.glob(pat)):
+            if "reclassified" not in p.name:
+                found.append(p)
     return found
 
 

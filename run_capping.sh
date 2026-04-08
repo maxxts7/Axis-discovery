@@ -7,11 +7,14 @@
 #   ./run_capping.sh <preset> 0 1 2 3       # 4 GPUs in parallel
 #
 # Presets:
-#   sanity   5 behaviors, α=0.25 only
-#   light    20 behaviors, α ∈ {0.1, 0.25, 0.5}
-#   full     100 behaviors, α ∈ {0.1, 0.25, 0.5, 0.75}
-#   paper    100 behaviors, α=0.25 only
-#   cal_inv  20 behaviors, jbb_cal_raw_inv axis only (polarity-fix test)
+#   sanity       5 behaviors, α=0.25 only
+#   light        20 behaviors, α ∈ {0.1, 0.25, 0.5}
+#   full         100 behaviors, α ∈ {0.1, 0.25, 0.5, 0.75}
+#   paper        100 behaviors, α=0.25 only
+#   cal_inv      20 behaviors, jbb_cal_raw_inv axis only (polarity-fix test)
+#   cross_sanity cross-axis capping (5 prompts, sanity check)
+#   cross_axis   cross-axis capping (20 prompts)
+#   cross_full   cross-axis capping (100 prompts, full run)
 
 set -euo pipefail
 
@@ -29,11 +32,14 @@ fi
 # ── Multi-GPU parallel ───────────────────────────────────────────────────────
 # Divide behaviors evenly; last shard takes any remainder.
 case "$PRESET" in
-    sanity)  N_TOTAL=5   ;;
-    light)   N_TOTAL=20  ;;
-    full)    N_TOTAL=100 ;;
-    paper)   N_TOTAL=100 ;;
-    cal_inv) N_TOTAL=20  ;;
+    sanity)        N_TOTAL=5   ;;
+    light)         N_TOTAL=20  ;;
+    full)          N_TOTAL=100 ;;
+    paper)         N_TOTAL=100 ;;
+    cal_inv)       N_TOTAL=20  ;;
+    cross_sanity)  N_TOTAL=5   ;;
+    cross_axis)    N_TOTAL=20  ;;
+    cross_full)    N_TOTAL=100 ;;
     *) echo "Unknown preset: $PRESET"; exit 1 ;;
 esac
 
