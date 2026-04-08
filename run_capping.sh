@@ -36,13 +36,9 @@ CHUNK=$(( N_TOTAL / N_GPUS ))
 TMP="_parallel_tmp"
 PIDS=()
 
-# Pre-download axis + datasets so GPU processes don't race
-echo "Pre-caching axis and datasets..."
-python -c "
-from capping_experiment import download_axis; download_axis('Qwen/Qwen3-32B')
-from run_capping import load_jailbreak_dataset, load_wildjailbreak_train, load_jbb_behaviors
-load_jailbreak_dataset(1); load_wildjailbreak_train(1); load_jbb_behaviors(1)
-"
+# Pre-download axis so GPU processes don't race
+echo "Pre-downloading axis vectors..."
+python -c "from capping_experiment import download_axis; download_axis('Qwen/Qwen3-32B')"
 
 echo "Splitting $N_TOTAL behaviors across $N_GPUS GPUs (chunk=$CHUNK)..."
 

@@ -77,7 +77,6 @@ def download_axis(model_name: str, cache_dir: str = "results") -> str:
         filename=cfg["hf_axis_file"],
         repo_type="dataset",
         local_dir=cache_dir,
-        local_dir_use_symlinks=False,
     )
 
 
