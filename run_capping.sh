@@ -106,11 +106,11 @@ while true; do
         if [ "${DONE[$i]}" -eq 1 ]; then
             STATUS="${STATUS}GPU${GPU}:done  "
         elif [ -f "$LOG" ]; then
-            # Extract latest "Prompt N done" or "Cross-axis on" progress
-            PROGRESS=$(grep -oP 'Prompt \d+ done.*?ETA \S+' "$LOG" 2>/dev/null | tail -1)
+            # Extract latest "Prompt N done" progress (|| true to avoid set -e exit)
+            PROGRESS=$(grep -oE 'Prompt [0-9]+ done.*ETA [^ ]+' "$LOG" 2>/dev/null | tail -1) || true
             if [ -z "$PROGRESS" ]; then
                 # Check for earlier phases (threshold computation, axis building)
-                PHASE=$(grep -E 'Computing|Building|Loading|Running' "$LOG" 2>/dev/null | tail -1 | sed 's/.*\] //')
+                PHASE=$(grep -E 'Computing|Building|Loading|Running' "$LOG" 2>/dev/null | tail -1 | sed 's/.*] //') || true
                 STATUS="${STATUS}GPU${GPU}:${PHASE:-starting}  "
             else
                 STATUS="${STATUS}GPU${GPU}:${PROGRESS}  "
