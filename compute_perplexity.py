@@ -49,12 +49,16 @@ def compute_perplexity(
     prefix = tokenizer.apply_chat_template(
         conversation, tokenize=False, add_generation_prompt=True, **chat_kwargs
     )
-    full_text = prefix + generated_text
+    # Tokenize prefix and generated text separately, then concatenate token IDs.
+    # This avoids BPE merging across the boundary which would make prompt_len
+    # (from independent tokenization) misalign with the joint tokenization.
+    prefix_ids = tokenizer(prefix, return_tensors="pt")["input_ids"]
+    gen_ids = tokenizer(generated_text, return_tensors="pt",
+                        add_special_tokens=False)["input_ids"]
+    input_ids = torch.cat([prefix_ids, gen_ids], dim=1).to(device)
+    prompt_len = prefix_ids.shape[1]
 
-    input_ids = tokenizer(full_text, return_tensors="pt")["input_ids"].to(device)
-    prompt_len = tokenizer(prefix, return_tensors="pt")["input_ids"].shape[1]
-
-    n_gen_tokens = input_ids.shape[1] - prompt_len
+    n_gen_tokens = gen_ids.shape[1]
     if n_gen_tokens <= 0:
         return float("nan")
 

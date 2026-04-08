@@ -34,16 +34,33 @@ def main():
     final_dir = Path(OUTPUT_DIRS[args.preset])
     final_dir.mkdir(parents=True, exist_ok=True)
 
-    for fname in ["generations.csv", "per_step_metrics.csv"]:
+    # Files that are sliced across GPUs and need concatenation
+    merge_files = [
+        "generations.csv",
+        "per_step_metrics.csv",
+        "cross_axis_generations.csv",
+        "cross_axis_per_step_metrics.csv",
+    ]
+    for fname in merge_files:
         parts = [pd.read_csv(d / fname) for d in tmp_dirs if (d / fname).exists()]
         if not parts:
-            print(f"  WARNING: no data for {fname}")
+            if fname in ("generations.csv", "per_step_metrics.csv"):
+                print(f"  WARNING: no data for {fname}")
             continue
         merged = pd.concat(parts, ignore_index=True)
         cols = [c for c in SORT_COLS if c in merged.columns]
         merged.sort_values(cols, inplace=True)
         merged.to_csv(final_dir / fname, index=False)
         print(f"  {fname}: {len(merged)} rows")
+
+    # capability_eval.csv is identical across GPUs (same calibration prompts),
+    # so just copy from the first available GPU
+    for d in tmp_dirs:
+        cap_eval = d / "capability_eval.csv"
+        if cap_eval.exists():
+            shutil.copy2(cap_eval, final_dir / "capability_eval.csv")
+            print(f"  capability_eval.csv copied from {d.name}")
+            break
 
     version_src = tmp_dirs[0] / "version.json"
     if version_src.exists():
