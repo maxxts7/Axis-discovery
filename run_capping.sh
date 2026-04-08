@@ -70,18 +70,60 @@ for i in "${!GPUS[@]}"; do
     PIDS+=($!)
 done
 
-# Wait for all shards
+# Wait for all shards with progress monitoring
 FAILED=0
-for i in "${!PIDS[@]}"; do
-    PID="${PIDS[$i]}"
-    GPU="${GPUS[$i]}"
-    if wait "$PID"; then
-        echo "GPU $GPU done."
-    else
-        echo "GPU $GPU FAILED — see $TMP/gpu${i}.log"
-        FAILED=1
-    fi
+DONE=()
+for i in "${!GPUS[@]}"; do DONE[$i]=0; done
+
+while true; do
+    # Check how many are still running
+    RUNNING=0
+    for i in "${!PIDS[@]}"; do
+        if [ "${DONE[$i]}" -eq 0 ] && kill -0 "${PIDS[$i]}" 2>/dev/null; then
+            RUNNING=$((RUNNING + 1))
+        elif [ "${DONE[$i]}" -eq 0 ]; then
+            # Just finished — check exit status
+            wait "${PIDS[$i]}" 2>/dev/null
+            EXIT_CODE=$?
+            DONE[$i]=1
+            if [ "$EXIT_CODE" -ne 0 ]; then
+                echo "  GPU ${GPUS[$i]} FAILED (exit $EXIT_CODE) — see $TMP/gpu${i}.log"
+                FAILED=1
+            else
+                echo "  GPU ${GPUS[$i]} done."
+            fi
+        fi
+    done
+
+    # All finished?
+    [ "$RUNNING" -eq 0 ] && break
+
+    # Print progress from each GPU's log
+    STATUS=""
+    for i in "${!GPUS[@]}"; do
+        GPU="${GPUS[$i]}"
+        LOG="$TMP/gpu${i}.log"
+        if [ "${DONE[$i]}" -eq 1 ]; then
+            STATUS="${STATUS}GPU${GPU}:done  "
+        elif [ -f "$LOG" ]; then
+            # Extract latest "Prompt N done" or "Cross-axis on" progress
+            PROGRESS=$(grep -oP 'Prompt \d+ done.*?ETA \S+' "$LOG" 2>/dev/null | tail -1)
+            if [ -z "$PROGRESS" ]; then
+                # Check for earlier phases (threshold computation, axis building)
+                PHASE=$(grep -E 'Computing|Building|Loading|Running' "$LOG" 2>/dev/null | tail -1 | sed 's/.*\] //')
+                STATUS="${STATUS}GPU${GPU}:${PHASE:-starting}  "
+            else
+                STATUS="${STATUS}GPU${GPU}:${PROGRESS}  "
+            fi
+        else
+            STATUS="${STATUS}GPU${GPU}:waiting  "
+        fi
+    done
+    printf "\r\033[K%s" "$STATUS"
+
+    sleep 5
 done
+echo ""
 
 [ "$FAILED" -eq 1 ] && exit 1
 
