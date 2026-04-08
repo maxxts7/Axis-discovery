@@ -51,9 +51,16 @@ for i in "${!GPUS[@]}"; do
     mkdir -p "$DIR"
 
     echo "  GPU $GPU  slice $SLICE  → $DIR"
-    CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
-        --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
-        > "$TMP/gpu${i}.log" 2>&1 &
+    if [ "$i" -eq 0 ]; then
+        # Show first GPU's output live; also save to log via tee
+        CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
+            --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
+            2>&1 | tee "$TMP/gpu${i}.log" &
+    else
+        CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
+            --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
+            > "$TMP/gpu${i}.log" 2>&1 &
+    fi
     PIDS+=($!)
 done
 
