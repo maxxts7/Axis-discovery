@@ -57,6 +57,7 @@ for i in "${!GPUS[@]}"; do
             --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
             2>&1 | tee "$TMP/gpu${i}.log" &
     else
+        TQDM_DISABLE=1 HF_HUB_DISABLE_PROGRESS_BARS=1 \
         CUDA_VISIBLE_DEVICES="$GPU" python run_capping.py \
             --preset "$PRESET" --prompt-slice "$SLICE" --output-dir "$DIR" \
             > "$TMP/gpu${i}.log" 2>&1 &
